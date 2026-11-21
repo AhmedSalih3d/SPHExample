@@ -137,6 +137,51 @@ end
     end
 end
 
+@testset "3D affine reconstruction and normal mass flux" begin
+    constants = SimulationConstants{Float64}(3;dx=0.1)
+    target_constants = SimulationConstants{Float64}(3;dx=0.05)
+    kernel = SPHKernelInstance{3,Float64}(WendlandC2();h=0.15)
+    grid = CellGrid{3}((Int32(-3),Int32(-3),Int32(-3)),(Int32(7),Int32(7),Int32(7)),Int32(343))
+    points = [SVector(x,y,z) for z in -0.2:0.1:0.2 for y in -0.2:0.1:0.2 for x in -0.2:0.1:0.2]
+    cells = [VR.linear_cell(grid,VR.cell_coords(p,kernel.H⁻¹)) for p in points]
+    points = points[sortperm(cells)]
+    counts = zeros(Int32,grid.ncells)
+    for cell in cells
+        counts[cell] += 1
+    end
+    starts = Int32[0; cumsum(counts)]
+    rho(p) = 1000 + 2p[1] - 3p[2] + p[3]
+    speed(p) = SVector(p[1]+p[3],2-p[2],-1+p[3])
+    density,velocity,types = rho.(points),speed.(points),fill(Fluid,length(points))
+    limits = VR.resolution_limits(VariableResolutionBox((10,10,10),(12,12,12)),0.15,0.075)
+    query = SVector(0.02,-0.03,0.04)
+    value,valid,_,_ = VR.reconstruct_state(query,points,velocity,density,types,starts,grid,kernel,constants,limits,false)
+    @test valid
+    @test value ≈ SVector(rho(query),speed(query)...) atol=1e-9
+
+    if CUDA.functional()
+        source = (CuArray(points),CuArray(velocity),CuArray(density),CuArray(types),CuArray(starts),grid)
+        position = CUDA.zeros(SVector{3,Float64},8)
+        target_velocity = similar(position)
+        target_density = CUDA.zeros(Float64,8)
+        target_types = CuArray(fill(Frozen,8))
+        ids,groups = CUDA.zeros(Int64,8),CUDA.zeros(UInt,8)
+        allocation,next_id,events = CUDA.zeros(Int32,2),CuArray(Int64[2]),CUDA.zeros(Int64,4)
+        budget,live = CUDA.zeros(Float64,1),CUDA.zeros(Int32,1)
+        @cuda threads=1 VR.interface_flux_kernel!(CuArray([query]),CuArray([SVector(0.,0.,1.)]),CuArray([0.01]),budget,
+            position,target_velocity,target_density,target_types,ids,groups,nothing,allocation,next_id,events,
+            CUDA.zeros(Int32,length(starts)),grid,kernel,source...,kernel,constants,target_constants,
+            UInt(2),limits,false,0.02,Int32(1),live)
+        @test Array(allocation) == [1,0]
+        @test Array(target_types)[1] == Fluid
+        @test Array(position)[1][3] < query[3]
+        @test Array(target_velocity)[1] ≈ speed(query) atol=1e-9
+        @test Array(target_density)[1] ≈ rho(query) atol=1e-9
+        @test Array(ids)[1] == 2
+        @test Array(events)[1] == 1
+    end
+end
+
 function moving_resolution_case()
     region = VariableResolutionBox((0.5,-0.3),(1.8,1.5))
     case = VariableResolutionExample.vresolution_dambreak_case(dx = 0.05,region = region,

@@ -12,7 +12,7 @@ One reference refinement box, stationary unless its configuration
 sets `follow` to a body marker. The fine spacing is the coarse
 spacing divided by `ratio`. Buffer and overlap widths are measured in each
 domain's smoothing length and the fine smoothing length, respectively.
-The CUDA solver currently accepts two-dimensional boxes.
+The CUDA solver accepts 2D rectangles and stationary 3D boxes.
 """
 struct VariableResolutionBox{D}
     lower::SVector{D,Float64}
@@ -45,10 +45,10 @@ Supply the fine fluid/wall geometry explicitly, including mDBC ghost fields.
 When omitted, fine constants and kernel are derived by scaling the coarse
 spacing, mass, smoothing length and kernel regularization by `region.ratio`.
 `particle_reserve` reserves creation slots per domain; `nothing` sizes each
-pool from its spacing and the refinement area. Output normally selects owned
+pool from its spacing and the refinement geometry. Output normally selects owned
 particles; `include_buffers=true` includes both domains' buffers as well.
 
-Set `follow` to a `Moving` or `Floating` body's positive `GroupMarker` to
+In 2D, set `follow` to a `Moving` or `Floating` body's positive `GroupMarker` to
 translate and rotate the rectangle with that body. Bounds describe the body's
 reference geometry coordinates. Supply the body in `fine_geometry`; an optional
 coarse copy is omitted so its force and mass are counted only once. The body
@@ -70,7 +70,7 @@ stepping, CUDA graphs and single-file VTKHDF. Output `Resolution` is the zero-ba
 level number; the returned `final_state.resolution.levels` contains all levels.
 The outermost config's `include_buffers` controls output for every level.
 
-The backend supports 2D rectangles, Wendland C2 and DBC or Simple mDBC
+The 2D path supports Wendland C2 and DBC or Simple mDBC
 walls. Select ordinary symplectic, single-neighbor
 or reference symplectic stepping with `SimTimeStepping`. Select any
 GPU-compatible density diffusion model with `RunSimulation(SimDensityDiffusion=...)`,
@@ -79,6 +79,13 @@ reference stepping requires artificial viscosity. `SimDamping` is supported on b
 Both ordinary timestep schemes reuse the solver's integration kernels. Because
 refinement rebuilds the domains each step, single-neighbor stepping refreshes
 the accepted derivative each step, following the ordinary rebuild contract.
+
+The 3D path uses a single fixed box, `UpdatedMDBC`, `NoShifting`, and
+`SymplecticTimeStepping`. A floating group belongs entirely to
+`fine_geometry`, with one coarse support radius of clearance from the
+coarse exclusion box throughout the run. Leave `follow` and `child` unset.
+For independently sampled body loads, pass
+`SimStateSampling=(; times, floating_history=true)` with clipped timesteps.
 """
 struct VariableResolutionConfig{G,C,K,CH,D}
     region::VariableResolutionBox{D}

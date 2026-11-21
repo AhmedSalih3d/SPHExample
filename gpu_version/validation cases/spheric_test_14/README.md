@@ -377,7 +377,90 @@ an NVIDIA GeForce RTX 5080.
 | Float 1 up | 12,167 | 388.22 |
 | Float 2 down | 12,517 | 398.47 |
 
-The refinement geometry supports construction of a 3D box and sampling
-its six faces. The solver still requires 2D variable resolution. A 3D
-refinement benchmark requires GPU interface coupling and UpdatedMDBC force
-validation.
+### Float 2 with fixed 3D Variable Resolution
+
+The refinement run uses 25 mm spacing in the outer tank and 12.5 mm for
+the complete hull and surrounding water. The fixed inner box extends
+0.60 m from the centre along each horizontal axis and from −0.625 m to
++0.50 m vertically. The solver exchanges density and velocity across the
+overlapping buffers and samples volume flux on all six faces. The complete
+body is owned by the fine domain and its `UpdatedMDBC` fluid loads drive
+six-degree-of-freedom rigid motion. The solver checks that the body stays
+at least one coarse kernel support radius inside the coarse exclusion
+box.
+
+The free release uses the 4.8 m tank by default. The held load command and
+`--compact` free release use a 2.4 m tank. Both use the nominal 230 mm
+Float 2 draft. The uniform 4.8 m benchmark above uses the 219.89 mm draft
+inferred from 25 mm held loads. Motion and forces are sampled every 5 ms.
+Particle VTKHDF snapshots are written every 100 ms, plus initial and final
+states.
+
+```powershell
+julia --project=. -t 2,0 "validation cases/spheric_test_14/float2_variable_resolution.jl" --smoke --held
+julia --project=. -t 2,0 "validation cases/spheric_test_14/float2_variable_resolution.jl" --held
+julia --project=. -t 2,0 "validation cases/spheric_test_14/float2_variable_resolution.jl"
+```
+
+A final duration argument can shorten any of the above runs. Outputs include
+a sampled body and force CSV, the coarse/fine particle counts, represented
+fluid mass, and interface creation and retirement counts.
+
+The 0.25 s held run in the 2.4 m tank completed with constant represented
+fluid mass and no particle exclusions. The vertical force still oscillated
+from 235 to 250 N over the final 50 ms, for a mean of 244.28 N against the
+229.75 N body weight. This window is too short to infer the settled draft.
+[Held force history](results/float2_vr_held_250ms/float2_down_forces.png)
+
+The 0.55 s compact free release completed without particle exclusions. Its
+heave trace differed from the uniform 12.5 mm run by 0.71 mm RMS over the
+same window. Its first crest was +86.49 mm at 0.505 s, compared with
++85.09 mm at 0.505 s for uniform fine spacing and +79.51 mm at 0.500 s
+in the experiment. The reported owned fluid mass increased by 0.25% as
+particles crossed the ownership boundary. The full decay remains to be
+validated. [First-crest comparison](results/float2_vr_compact_release_550ms/float2_down_heave_sensitivity.png)
+
+```powershell
+julia --project=. -t 2,0 "validation cases/spheric_test_14/float2_variable_resolution.jl" --held 0.25
+julia --project=. -t 2,0 "validation cases/spheric_test_14/float2_variable_resolution.jl" --compact 0.55
+python "validation cases/spheric_test_14/plot.py" float2_vr_compact_release_550ms --compare full_UpdatedMDBC_dp0.0125_half1.2_h2.0_t4.5_Test2 --release float2_down
+python "validation cases/spheric_test_14/plot_wide_tank_forces.py" float2_vr_compact_release_550ms --release float2_down
+```
+
+### Float 2 sponge and GPU timing controls
+
+At fixed 4.8 m tank width, moving the sponge start from 1.90 to 2.15 m
+shortened the damping band from 0.50 to 0.25 m with its maximum rate still
+12 s^-1. The 25 mm resolution, hull draft, wall location, and release
+were the same. The fourth-cycle swing changed from 37.83 to 38.23 mm
+versus 62.36 mm measured. Heave RMSE increased from 7.05 to 7.23 mm.
+The shorter band gave little recovery of late heave in this comparison.
+[Float 2 sponge comparison](results/benchmark_3d_48m_float2_sponge025/float2_down_heave_sensitivity.png)
+
+```powershell
+julia --project=. -t 2,0 "validation cases/spheric_test_14/benchmark_wide_tank.jl" --sponge-control
+python "validation cases/spheric_test_14/plot.py" benchmark_3d_48m_float2_sponge025 --compare benchmark_3d_48m --release float2_down
+julia --project=. -t 2,0 "validation cases/spheric_test_14/benchmark_float2_fields.jl"
+julia --project=. -t 2,0 "validation cases/spheric_test_14/benchmark_float2_fields.jl" --threads 0.5
+```
+
+The GPU comparison keeps the baseline sponge and uses the full-width
+Float 2 case. It warms both variants before alternating order across
+two pairs. Wall times cover the solver driver with ordinary GPU graphs,
+100 ms particle output and 5 ms body sampling. Each pair compares final
+particles by ID, body heave, vertical force and solver work counts.
+On the RTX 5080, the pressure and reciprocal-density cache gave speed
+ratios of 0.976 and 1.016 over 0.1 s. The 256-thread interaction blocks
+gave ratios of 1.056 and 1.055 over the same window.
+
+Over the 0.5 s window, changing the interaction block from 128 to 256
+threads per block reduced paired wall times from 41.22/41.45 s to
+38.77/38.76 s. Each run took 1,313 steps, nine cell-list rebuilds, 111
+step-state readbacks, six particle frames and 101 body samples. Across
+the two pairs, the largest body heave difference was 0.000089 mm, the
+largest vertical-force difference was 0.00335 N and the largest
+per-particle position difference was 0.113 mm. This is a short-window GPU
+measurement. A full release is needed to assess late heave sensitivity.
+Use `--threads-256` on `benchmark_wide_tank.jl` to run the full Float 2
+release with this block size and save it in a separate result directory.
+[Paired 0.5 s timings](results/benchmark_3d_48m/float2_threads_benchmark_500ms.csv)

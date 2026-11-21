@@ -11,7 +11,8 @@ using ..SimulationLoggerConfiguration: SimulationLogger, log_line, LogStep, LogF
 import ..SimulationLoggerConfiguration as LOGGER
 using ..SimulationGeometry
 using ..SimulationConstantsConfiguration
-using ..SimulationMetaDataConfiguration: DualSPHysicsSymplectic, SymplecticTimeStepping, SingleNeighborTimeStepping, SimpleMDBC, NoMDBC
+using ..SimulationMetaDataConfiguration: DualSPHysicsSymplectic, SymplecticTimeStepping, SingleNeighborTimeStepping,
+    SimpleMDBC, NoMDBC, UpdatedMDBC, ClonedPressureBoundary
 using ..VariableResolutionConfiguration: VariableResolutionBox, VariableResolutionConfig
 using ..SPHKernels
 using ..SPHDensityDiffusionModels: SPHDensityDiffusion, LinearDensityDiffusion, FourtakasDensityDiffusion
@@ -106,12 +107,12 @@ struct ResolutionDomain{P,C,S,K,F,I,PP,POOL,B,A,M}
     id_stride::Int64
 end
 
-function make_resolution_domain(geometry, constants::SimulationConstants{T}, kernel, limits, fine, reserve;
+function make_resolution_domain(geometry, constants::SimulationConstants{T}, kernel::SPHKernelInstance{K,D}, limits, fine, reserve;
         resident = false, standard = false, pairwise_timestep = standard, shifting = false, boundary_mode = SimpleMDBC(), attachment_config=nothing, prescribed_system=nothing, time=0.0,
-        id_stride=2, id_offset=fine ? 2 : 1) where {T}
-    geometry isa AbstractVector && !isempty(geometry) && all(g -> g isa SPHGeometry{2,T},geometry) ||
-        throw(ArgumentError("each domain needs a nonempty vector of 2D geometries matching its constants' precision"))
-    geometry = SPHGeometry{2,T}[geometry...]
+        id_stride=2, id_offset=fine ? 2 : 1) where {T,K,D}
+    geometry isa AbstractVector && !isempty(geometry) && all(g -> g isa SPHGeometry{D,T},geometry) ||
+        throw(ArgumentError("each domain needs a nonempty vector of $D-dimensional geometries matching its constants' precision"))
+    geometry = SPHGeometry{D,T}[geometry...]
     fluid_markers = unique([g.GroupMarker for g in geometry if g.Type == Fluid])
     length(fluid_markers) <= 1 || throw(ArgumentError("each resolution domain supports a single fluid group"))
     fluid_marker = isempty(fluid_markers) ? UInt(2) : UInt(only(fluid_markers))
@@ -124,8 +125,9 @@ function make_resolution_domain(geometry, constants::SimulationConstants{T}, ker
         (attachment_config !== nothing && g.GroupMarker == attachment_config.marker && g.Type in (Moving,Floating)) ||
         (prescribed_system !== nothing && g.Type == Moving && g.Motion === nothing && g.Floating === nothing), geometry) ||
         throw(ArgumentError("variable resolution supports fluid, fixed walls and the configured followed body"))
-    boundary_mode isa NoMDBC || all(g -> !is_wall(g.Type) || (hasproperty(g.Particles, :GhostPoints) && hasproperty(g.Particles, :GhostNormals)), geometry) ||
-        throw(ArgumentError("fixed and moving walls require mDBC ghost points and normals"))
+    needs_ghosts(kind) = boundary_mode isa ClonedPressureBoundary ? is_pressure_boundary(kind) : is_wall(kind)
+    boundary_mode isa NoMDBC || all(g -> !needs_ghosts(g.Type) || (hasproperty(g.Particles, :GhostPoints) && hasproperty(g.Particles, :GhostNormals)), geometry) ||
+        throw(ArgumentError("mDBC boundary particles require ghost points and normals"))
     for g in geometry
         all(x -> all(isfinite,x),g.Particles.Position) && all(isfinite,g.Particles.Density) ||
             throw(ArgumentError("initial particle positions and densities must be finite"))
@@ -133,7 +135,7 @@ function make_resolution_domain(geometry, constants::SimulationConstants{T}, ker
             throw(ArgumentError("initial particle velocities must be finite"))
         all(ρ -> 0.7constants.ρ₀ <= ρ <= 1.3constants.ρ₀,g.Particles.Density) ||
             throw(ArgumentError("initial densities must lie within 70–130% of the reference density"))
-        if is_wall(g.Type) && !(boundary_mode isa NoMDBC)
+        if needs_ghosts(g.Type) && !(boundary_mode isa NoMDBC)
             all(x -> all(isfinite,x) && !iszero(x),g.Particles.GhostPoints) &&
                 all(x -> all(isfinite,x) && !iszero(x),g.Particles.GhostNormals) ||
                 throw(ArgumentError("mDBC walls require finite nonzero ghost points and normals"))
@@ -143,7 +145,7 @@ function make_resolution_domain(geometry, constants::SimulationConstants{T}, ker
     initial_count = sum(length(g.Particles) for g in geometry)
     initial_count > 0 || throw(ArgumentError("each domain needs initial fluid or wall particles"))
     reserve < typemax(Int32) - initial_count || throw(ArgumentError("particle capacity exceeds Int32 indexing"))
-    dormant = SPHGeometry{2,T}(fill(zero(SVector{2,Float64}), reserve);
+    dormant = SPHGeometry{D,T}(fill(zero(SVector{D,Float64}), reserve);
         Density = constants.ρ₀, Type = Frozen, GroupMarker = 0)
     host = AllocateDataStructures([geometry; dormant]; position_type = Float64, cells = false, kernel_output = false)
     # A residue class per level keeps IDs globally unique after creation.
@@ -152,17 +154,19 @@ function make_resolution_domain(geometry, constants::SimulationConstants{T}, ker
     host.ID .= id_stride .* (host.ID .- 1) .+ id_offset
     gpu = upload_particles(host; position_type = Float64, kernel_output = false)
     n = length(gpu)
-    cells = CellListWorkspace{2,Float64}(n)
+    cells = CellListWorkspace{D,Float64}(n)
     # Dormant pool slots are excluded from grid bounds and all force sums.
     cells.frozen_total = reserve
-    support = GPUSupportArrays{2,T}(n; position_type = Float64, shifting, dual_time_stepping = true,pairwise_timestep)
+    support = GPUSupportArrays{D,T}(n; position_type = Float64, shifting, dual_time_stepping = !standard, pairwise_timestep,
+        updated_mdbc = boundary_mode isa ClonedPressureBoundary)
     attachment = make_resolution_attachment(attachment_config,geometry,host,constants;time)
     prescribed = make_resolution_prescribed(prescribed_system,geometry,host)
     # Predictor neighbors are sorted independently. Keep their inputs dense and
     # scatter only the evaluated derivatives back to the accepted-state order.
     predictor = (; particles = upload_particles(host; position_type = Float64, kernel_output = false),
-        cells = CellListWorkspace{2,Float64}(n),
-        support = GPUSupportArrays{2,T}(n; position_type = Float64, shifting, dual_time_stepping = true,pairwise_timestep),
+        cells = CellListWorkspace{D,Float64}(n),
+        support = GPUSupportArrays{D,T}(n; position_type = Float64, shifting, dual_time_stepping = !standard, pairwise_timestep,
+            updated_mdbc = boundary_mode isa ClonedPressureBoundary),
         kernel, constants, boundary_mode, attachment=predictor_attachment(attachment),prescribed=predictor_attachment(prescribed),
         pool = resident ? ResolutionPool(host, initial_count) : nothing)
     faces = interface_points(limits, fine, Float64(constants.dx))
@@ -260,16 +264,16 @@ function resolution_snapshot(domain, region, limits; include_buffers = false)
         buffer = Int8[types[i] == Fluid && buffer_particle(x[i], limits, domain.fine) for i in keep])
 end
 
-function validate_resolution_physics(coarse_constants,fine_constants,coarse_kernel,fine_kernel,region)
+function validate_resolution_physics(coarse_constants,fine_constants,coarse_kernel,fine_kernel,region::VariableResolutionBox{D}) where D
     for (constants, kernel) in ((coarse_constants, coarse_kernel), (fine_constants, fine_kernel))
         typeof(constants.dx) in (Float32,Float64) && typeof(kernel.h) == typeof(constants.dx) ||
             throw(ArgumentError("each domain requires matching Float32 or Float64 constants and kernel precision"))
-        kernel isa SPHKernelInstance{<:WendlandC2,2} || throw(ArgumentError("variable resolution requires 2D Wendland C2 kernels"))
+        kernel isa SPHKernelInstance{<:WendlandC2,D} || throw(ArgumentError("variable resolution requires Wendland C2 kernels matching the box dimension"))
         positive = (constants.dx, constants.m₀, constants.c₀, constants.ρ₀, constants.Cb, constants.γ⁻¹, kernel.h)
         all(isfinite,positive) && minimum(positive) > 0 ||
             throw(ArgumentError("spacings, masses, sound speeds, reference densities, EOS coefficients and smoothing lengths must be positive and finite"))
-        isapprox(constants.m₀, constants.ρ₀ * constants.dx^2; rtol = 1e-5) ||
-            throw(ArgumentError("2D resolution domains require mass = reference density * spacing^2"))
+        isapprox(constants.m₀, constants.ρ₀ * constants.dx^D; rtol = 1e-5) ||
+            throw(ArgumentError("resolution domains require mass = reference density * spacing^dimension"))
         isfinite(constants.γ) && constants.γ > 0 && isfinite(constants.CFL) && constants.CFL > 0 &&
             all(v -> isfinite(v) && v >= 0,(constants.g,constants.α,constants.δᵩ,constants.BackgroundPressure)) ||
             throw(ArgumentError("gamma and CFL must be positive; gravity, viscosity, diffusion and background pressure must be finite and nonnegative"))
@@ -321,6 +325,8 @@ function run_variable_resolution_simulation(; coarse_geometry, fine_geometry, co
         simulation_time = 1.0, output_interval = 0.0025, save_location,
         particle_reserve = nothing, include_buffers = false, execution = :gpu,
         batch_steps = 32, use_graphs = true, density_diffusion::SPHDensityDiffusion = LinearDensityDiffusion())
+    region isa VariableResolutionBox{2} ||
+        throw(ArgumentError("the standalone variable-resolution driver is 2D; use RunSimulation for 3D"))
     CUDA.functional() || error("variable resolution requires a functional CUDA device")
     execution in (:gpu, :host) || throw(ArgumentError("execution must be :gpu or :host"))
     batch_steps isa Integer && 1 <= batch_steps <= 256 || throw(ArgumentError("batch_steps must be an integer from 1 to 256"))

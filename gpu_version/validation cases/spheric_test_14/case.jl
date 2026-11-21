@@ -17,7 +17,8 @@ function in_float(p, release, base)
 end
 
 function sample_geometry(release, constants::SimulationConstants{T}, kernel; dx, half_width, depth,
-                         wall_top_z = 0.2, pause_time = 0.0, boundary_mode = NoMDBC) where {T}
+                         wall_top_z = 0.2, pause_time = 0.0, boundary_mode = NoMDBC,
+                         sampling_box = nothing) where {T}
     boundary_mode in (NoMDBC, SimpleMDBC, UpdatedMDBC, UpdatedMDBCWithImpedance, UpdatedMDBCNoPenetration) ||
         throw(ArgumentError("Unsupported floating boundary mode"))
     all(isfinite, (dx, half_width, depth, wall_top_z)) && dx > 0 && half_width >= 0.8 && depth > 0 && wall_top_z >= 0 ||
@@ -33,7 +34,18 @@ function sample_geometry(release, constants::SimulationConstants{T}, kernel; dx,
     body = similar(water)
     top = max(nz - 1, ceil(Int, (depth + base + release.height) / dx))
     wall_top = ceil(Int, (depth + wall_top_z) / dx)
-    for iz in -layers:max(top, wall_top), iy in -layers:nx+layers-1, ix in -layers:nx+layers-1
+    range_x, range_y = -layers:nx+layers-1, -layers:nx+layers-1
+    range_z = -layers:max(top, wall_top)
+    if sampling_box !== nothing
+        function clip_range(indices, origin, axis)
+            lo = ceil(Int, (sampling_box.lower[axis] - origin) / dx - 0.5)
+            hi = floor(Int, (sampling_box.upper[axis] - origin) / dx - 0.5)
+            return max(first(indices),lo):min(last(indices),hi)
+        end
+        range_x, range_y = clip_range(range_x,-nx*dx/2,1), clip_range(range_y,-nx*dx/2,2)
+        range_z = clip_range(range_z,-depth,3)
+    end
+    for iz in range_z, iy in range_y, ix in range_x
         p = SVector((ix + 0.5 - nx/2) * dx, (iy + 0.5 - nx/2) * dx, (iz + 0.5) * dx - depth)
         if iz < 0 || !(0 <= ix < nx && 0 <= iy < nx)
             iz <= wall_top && push!(wall, p)
@@ -88,7 +100,7 @@ function float_surface_projection(p, release, base)
     return SVector(q[1] * direction[1], q[1] * direction[2], q[2])
 end
 
-function run_case(release, case; output, vertical_axis = 3, state_sampling = nothing)
+function run_case(release, case; output, vertical_axis = 3, state_sampling = nothing, save_plot = true)
     save = case.metadata.SaveLocation
     (; dx, half_width, depth, duration) = case
     isfile(joinpath(save, "FreeHeave.vtkhdf")) && error("Run already exists at $save")
@@ -108,6 +120,11 @@ function run_case(release, case; output, vertical_axis = 3, state_sampling = not
         isopen(logger.LoggerIo) && close(logger.LoggerIo)
     end
     result.final_state.complete && result.diagnostics.frozen_particles == 0 || error("Incomplete float run")
+    if hasproperty(result.diagnostics,:resolution)
+        diag = result.diagnostics.resolution
+        all(events -> events[3] == 0 && events[4] == 0,diag.events) ||
+            error("Variable resolution excluded particles by density or nonfinite state")
+    end
     records = CSV.File(joinpath(save, "FreeHeave_Floating.csv"))
     heave = 1000 .* (getproperty(records, Symbol("Center:", vertical_axis - 1)) .- case.equilibrium_center_z)
     time = records.Time
@@ -132,7 +149,8 @@ function run_case(release, case; output, vertical_axis = 3, state_sampling = not
         merge!(config, Dict("sound_speed_m_s" => Float64(case.constants.c₀), "cfl" => Float64(case.constants.CFL),
             "viscosity" => string(nameof(typeof(case.viscosity))), "density_diffusion" => string(nameof(typeof(case.diffusion))),
             "kinematic_viscosity_m2_s" => Float64(case.constants.ν₀), "density_diffusion_coefficient" => Float64(case.constants.δᵩ),
-            "boundary_particles" => length(case.geometry[1].Particles), "floating_particles" => length(case.geometry[3].Particles),
+            "boundary_particles" => length(case.geometry[1].Particles),
+            "floating_particles" => sum(g -> length(g.Particles),filter(g -> g.Type == Floating,case.geometry);init=0),
             "complete" => result.final_state.complete, "frozen_particles" => result.diagnostics.frozen_particles))
         for key in (:sponge_width, :sponge_rate, :pause_time, :release_time)
             hasproperty(case, key) && (config[string(key)] = getproperty(case, key))
@@ -141,6 +159,19 @@ function run_case(release, case; output, vertical_axis = 3, state_sampling = not
             config["particle_output_interval_s"] = first(case.metadata.OutputTimes)
             config["floating_output_interval_s"] = first(state_sampling.times)
         end
+        if hasproperty(case,:fine_dx)
+            region = case.metadata.VariableResolution.region
+            resolution = result.final_state.resolution
+            config["fine_dx"] = case.fine_dx
+            config["refinement_lower_m"] = collect(region.lower)
+            config["refinement_upper_m"] = collect(region.upper)
+            config["fine_seed_fluid_particles"] = sum(g -> length(g.Particles),
+                filter(g -> g.Type == Fluid,case.metadata.VariableResolution.fine_geometry);init=0)
+            config["coarse_final_fluid_particles"] = count(==(Fluid),resolution.coarse.Type)
+            config["fine_final_fluid_particles"] = count(==(Fluid),resolution.fine.Type)
+            config["floating_particles"] = count(==(Floating),resolution.fine.Type)
+            config["particle_frames"] = result.diagnostics.output_frames
+        end
         if hasproperty(case, :release_time)
             config["artificial_viscosity_coefficient"] = Float64(case.constants.α)
             case.viscosity isa ArtificialViscosity &&
@@ -148,7 +179,7 @@ function run_case(release, case; output, vertical_axis = 3, state_sampling = not
         end
         TOML.print(io, config)
     end
-    save_heave_plot(output, release.name)
+    save_plot && save_heave_plot(output, release.name)
     return (; particles = joinpath(save, "FreeHeave.vtkhdf"), history, reference = reference_path)
 end
 

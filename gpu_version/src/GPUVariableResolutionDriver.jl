@@ -57,6 +57,7 @@ const RESOLUTION_GRID_ERROR = Int32(4)
 const RESOLUTION_RESERVE_ERROR = Int32(5)
 const RESOLUTION_STATE_ERROR = Int32(6)
 const RESOLUTION_MOTION_ERROR = Int32(7)
+const RESOLUTION_BODY_CLEARANCE_ERROR = Int32(8)
 
 function resolution_timestep_limit_kernel!(step,limit)
     GPUStepState.step_active(step) || return nothing
@@ -97,10 +98,10 @@ function resolution_scan!(ws, out, input, n, step, level = 1; inclusive = true)
     end
 end
 
-function resolution_bbox_kernel!(partial, invalid, positions, types, n, step)
+function resolution_bbox_kernel!(partial, invalid, positions, types, n, step, dimension)
     GPUStepState.step_active(step) || return nothing
     GPUCellGrid.bbox_reduce_scalar_kernel!(partial,invalid,positions,types,
-        GPUStepState.step_particle_count(step,n),Inf,-Inf,step,Val(2))
+        GPUStepState.step_particle_count(step,n),Inf,-Inf,step,dimension)
     return nothing
 end
 function resolution_grid_status_kernel!(status, step)
@@ -114,9 +115,9 @@ function resolution_grid_status_kernel!(status, step)
     return nothing
 end
 
-function resolution_grid_metadata_kernel!(step,args...)
+function resolution_grid_metadata_kernel!(step,dimension,args...)
     GPUStepState.step_active(step) || return nothing
-    GPUCellGrid.finish_grid_metadata_kernel!(args...,step,Val(2),Val(1))
+    GPUCellGrid.finish_grid_metadata_kernel!(args...,step,dimension,Val(1))
     return nothing
 end
 
@@ -188,14 +189,17 @@ const RESOLUTION_FIELDS = (:Position, :Velocity, :Density, :Type, :ID, :GroupMar
 function enqueue_resolution_rebuild!(domain, step)
     p,c,pool = domain.particles,domain.cells,domain.pool
     n,capacity = length(p),length(c.Counts)
+    D = length(eltype(p.Position))
+    dimension = Val(D)
+    expansion = ntuple(_ -> (true,true), D)
     blocks = cld(n,256)
     @cuda threads=256 blocks=c.bbox_ws.nblocks resolution_bbox_kernel!(c.bbox_ws.partial,
-        c.bbox_ws.invalid,reinterpret(Float64,p.Position),p.Type,Int32(n),step)
+        c.bbox_ws.invalid,reinterpret(Float64,p.Position),p.Type,Int32(n),step,dimension)
     # Retain allocated bounds and expand on the device. An empty pool retains
     # the last valid grid, so all-fluid domains can empty and refill safely.
-    @cuda threads=256 blocks=1 resolution_grid_metadata_kernel!(step,c.grid_dev,c.grid_state_dev,
+    @cuda threads=256 blocks=1 resolution_grid_metadata_kernel!(step,dimension,c.grid_dev,c.grid_state_dev,
         c.bbox_ws.partial,c.bbox_ws.invalid,Int32(c.bbox_ws.nblocks),Inf,-Inf,domain.kernel.H⁻¹,
-        Int64(c.max_cells),Int64(capacity),true,((true,true),(true,true)),true,nothing)
+        Int64(c.max_cells),Int64(capacity),true,expansion,true,nothing)
     @cuda threads=1 resolution_grid_status_kernel!(c.grid_state_dev,step)
     @cuda threads=256 blocks=cld(capacity,256) resolution_clear_kernel!(c.Counts,step)
     @cuda threads=1 resolution_clear_kernel!(view(c.CellStart,1:1),step)
@@ -242,15 +246,24 @@ function resolution_criteria_kernel!(partial, velocity, acceleration, types, vis
     return nothing
 end
 function resident_force_stage!(domain, step; density_diffusion=LinearDensityDiffusion(),viscosity=ArtificialViscosity(),scheme=DualSPHysicsSymplectic(),
-        correct_boundary=true,compute_shifting=false,include_gravity=Val(false),interaction=(;))
+        correct_boundary=true,compute_shifting=false,include_gravity=Val(false),half=false,interaction=(;))
     p,s,c,k = domain.particles,domain.support,domain.cells,domain.kernel
     launch_pos_cells!(s.PosCells,p.Position,p.CellID,c.grid_dev,step,k)
-    correct_boundary && !(domain.boundary_mode isa NoMDBC) && launch_mdbc!(p.Density,p.Position,p.GhostPoints,p.GhostIndex,p.Type,c.CellStart,c.grid_dev,step,k,domain.constants;
-        pos_cells=s.PosCells)
+    if domain.boundary_mode isa UpdatedMDBC
+        f = domain.attachment === nothing ? nothing : domain.attachment.floating
+        floating = SPHCellList.floating_mdbc_state((;gpu=p,floating=f),half)
+        GPUKernels.launch_updated_mdbc!(p.Density,p.Position,p.Velocity,p.GhostPoints,p.GhostNormals,
+            p.GhostIndex,p.Type,c.CellStart,c.grid_dev,step,k,domain.constants,s.boundary_data;
+            pos_cells=s.PosCells,floating_state=floating)
+    elseif correct_boundary && !(domain.boundary_mode isa NoMDBC)
+        launch_mdbc!(p.Density,p.Position,p.GhostPoints,p.GhostIndex,p.Type,c.CellStart,c.grid_dev,step,k,domain.constants;
+            pos_cells=s.PosCells)
+    end
     launch_interactions!(s.dρdtI,p.Acceleration,p.Kernel,p.KernelGradient,s.∇Cᵢ,s.∇◌rᵢ,
         p.Position,p.Density,p.Velocity,p.Type,c.CellStart,p.CellID,c.grid_dev,step,
-        density_diffusion,viscosity,k,domain.constants,Val(false),Val(compute_shifting && s.∇Cᵢ !== nothing);
-        boundary_forces=Val(false),pos_cells=s.PosCells,pair_signal=scheme isa DualSPHysicsSymplectic ? nothing : s.PairSignal,
+        density_diffusion,viscosity,k,domain.constants,Val(false),Val(compute_shifting && !isempty(s.∇Cᵢ));
+        boundary_forces=Val(domain.boundary_mode isa UpdatedMDBC),pos_cells=s.PosCells,boundary_data=s.boundary_data,
+        pair_signal=scheme isa DualSPHysicsSymplectic ? nothing : s.PairSignal,
         viscous_dt=scheme isa DualSPHysicsSymplectic ? s.dual_state.viscous : nothing,
         include_gravity,fastmath=false,interaction...)
     scheme isa DualSPHysicsSymplectic || return nothing
@@ -258,6 +271,10 @@ function resident_force_stage!(domain, step; density_diffusion=LinearDensityDiff
     @cuda threads=REDUCE_THREADS blocks=r.nblocks resolution_criteria_kernel!(r.partial,p.Velocity,p.Acceleration,p.Type,
         s.dual_state.viscous,step,Int32(length(p)))
 end
+
+# Support arrays have empty buffers when shifting is disabled. Scatter and
+# corrector kernels use nothing to omit the indexed accesses altogether.
+resolution_shifting_fields(s) = isempty(s.∇Cᵢ) ? (nothing,nothing) : (s.∇Cᵢ,s.∇◌rᵢ)
 
 function resolution_standard_reduction_kernel!(partial,x,v,a,types,step,kernel,n,signal=nothing)
     GPUStepState.step_active(step) || return nothing
@@ -498,8 +515,8 @@ function enqueue_resolution_step!(domains,limits,state; density_diffusion=Linear
         if d.attachment !== nothing
             a,qa = d.attachment,d.predictor.attachment
             @cuda threads=128 blocks=cld(length(p),128) resolution_body_predictor_indices_kernel!(qa.slots,qa.indices,a.slots,step,Int32(length(p)))
-            sample_resolution_body!(a,step,0.5)
-            place_resolution_body!(d.predictor,step)
+            limits isa AttachedResolutionLimits && sample_resolution_body!(a,step,0.5)
+            place_resolution_body!(d.predictor,step;half=true)
         end
         if d.prescribed !== nothing
             a,qa = d.prescribed,d.predictor.prescribed
@@ -522,7 +539,8 @@ function enqueue_resolution_step!(domains,limits,state; density_diffusion=Linear
         end
     end
     for d in domains
-        resident_force_stage!(d.predictor,ResolutionStep(state,d.predictor,3); density_diffusion,viscosity,scheme,correct_boundary=reference,compute_shifting=!reference,interaction)
+        resident_force_stage!(d.predictor,ResolutionStep(state,d.predictor,3); density_diffusion,viscosity,scheme,
+            correct_boundary=reference,compute_shifting=!reference,half=true,interaction)
     end
     reference && @cuda threads=1 resolution_dt_kernel!(coarse.predictor.support.dual_state.reduction.partial,fine.predictor.support.dual_state.reduction.partial,
         coarse.kernel,fine.kernel,coarse.constants,fine.constants,ResolutionStep(state,coarse,3),true,scheme.respect_stability_limits)
@@ -537,12 +555,14 @@ function enqueue_resolution_step!(domains,limits,state; density_diffusion=Linear
     for d in domains
         p,s,q,qs = d.particles,d.support,d.predictor.particles,d.predictor.support
         step = ResolutionStep(state,d,3)
+        gradient,divergence = resolution_shifting_fields(s)
+        half_gradient,half_divergence = resolution_shifting_fields(qs)
         @cuda threads=128 blocks=cld(length(p),128) resolution_scatter_predictor_kernel!(p.Acceleration,s.dρdtI,s.ρₙ⁺,
             reference ? nothing : s.Positionₙ⁺,reference ? nothing : s.Velocityₙ⁺,
             q.Acceleration,qs.dρdtI,q.Density,q.Position,q.Velocity,q.ID,
             ResolutionStep(state,d.predictor,3),Int32(length(p)),
             reference ? nothing : p.Position,reference ? nothing : p.Density,reference ? nothing : p.Type,limits,d.fine,
-            s.∇Cᵢ,s.∇◌rᵢ,qs.∇Cᵢ,qs.∇◌rᵢ)
+            gradient,divergence,half_gradient,half_divergence)
         if reference
             @cuda threads=128 blocks=cld(length(p),128) resolution_corrector_kernel!(p.Position,p.Velocity,p.Density,
                 s.Positionₙ⁺,s.ρₙ⁺,p.Acceleration,s.dρdtI,p.Type,step,d.constants,Int32(length(p)))
@@ -550,16 +570,18 @@ function enqueue_resolution_step!(domains,limits,state; density_diffusion=Linear
         else
             red = d.pool.reduction
             @cuda threads=REDUCE_THREADS blocks=red.nblocks resolution_standard_corrector_kernel!(p.Position,p.Velocity,
-                p.Acceleration,p.Density,s.dρdtI,s.ρₙ⁺,s.Positionₙ⁺,s.Velocityₙ⁺,p.Type,s.∇Cᵢ,s.∇◌rᵢ,
+                p.Acceleration,p.Density,s.dρdtI,s.ρₙ⁺,s.Positionₙ⁺,s.Velocityₙ⁺,p.Type,gradient,divergence,
                 ResolutionArithmeticStep{eltype(p.Density)}(step),d.kernel,d.constants,d.boundary_mode,red.partial,damping,Int32(length(p)),d.predictor.support.PairSignal)
         end
     end
     if fine.attachment !== nothing
         step = ResolutionStep(state,fine,3)
-        sample_resolution_body!(fine.attachment,step,1.0)
+        limits isa AttachedResolutionLimits && sample_resolution_body!(fine.attachment,step,1.0)
         place_resolution_body!(fine,step)
-        @cuda threads=1 resolution_frame_kernel!(limits.frames,fine.attachment.pose,limits.reference,step,
-            0.5Float64(fine.kernel.h),false)
+        if limits isa AttachedResolutionLimits
+            @cuda threads=1 resolution_frame_kernel!(limits.frames,fine.attachment.pose,limits.reference,step,
+                0.5Float64(fine.kernel.h),false)
+        end
         p,red = fine.particles,fine.pool.reduction
         @cuda threads=REDUCE_THREADS blocks=red.nblocks resolution_standard_reduction_kernel!(
             red.partial,p.Position,p.Velocity,p.Acceleration,p.Type,step,fine.kernel,Int32(length(p)),fine.support.PairSignal)
@@ -677,6 +699,8 @@ function advance_resolution!(domains,limits,state,deadline; batch_steps=32,use_g
             error("Non-finite variable-resolution particle state or nonpositive/nonfinite VRes timestep")
         elseif stop == RESOLUTION_MOTION_ERROR
             error("Attached refinement motion is nonfinite, discontinuous or outruns its buffer; use continuous/slower motion or a smaller CFL")
+        elseif stop == RESOLUTION_BODY_CLEARANCE_ERROR
+            error("Floating body crossed the fixed refinement clearance; enlarge the fine box to cover its motion")
         elseif !(stop in (0,GPUStepState.STOP_OUTPUT))
             error("Unexpected variable-resolution device status: $stop")
         end

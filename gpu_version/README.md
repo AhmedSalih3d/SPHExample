@@ -261,6 +261,13 @@ GPU predictor/corrector kernels and timestep formula. Refinement rebuilds both
 domains each step, so single-neighbor stepping refreshes its accepted derivative
 after every rebuild, as the ordinary solver does after a rebuild.
 
+For 3D, the normal solver also supports one fixed refinement box with
+Wendland C2, `UpdatedMDBC`, `NoShifting`, and `SymplecticTimeStepping()`.
+Supply the complete floating body in the fine geometry. Maintain a coarse
+kernel support radius of clearance between the hull and the coarse
+exclusion-box faces. Body forces can be sampled independently of the
+particle snapshots. See the [Test 14 Float 2 case](validation%20cases/spheric_test_14/README.md#float-2-with-fixed-3d-variable-resolution).
+
 To attach the patch to a moving or floating body, set `follow` to its
 `GroupMarker`:
 
@@ -1267,8 +1274,9 @@ free rigid motion and initial holds in uniform nonperiodic 2D/3D runs. Their
 pressure encoding, rigid acceleration and mirrored surface velocity are applied
 consistently at the evaluated stages. The planar heave-only locks are also
 supported. Other constrained modes and native multibody dynamics remain
-unsupported. The rotating floating-ghost path does not extend the
-variable-resolution solver. See the [floating UpdatedMDBC investigation](validation%20cases/spheric_test_14/FLOATING_UPDATED_MDBC.md)
+unsupported. The rotating floating-ghost path also supports a single
+fine-domain body in fixed 3D refinement with `UpdatedMDBC`. See the
+[floating UpdatedMDBC investigation](validation%20cases/spheric_test_14/FLOATING_UPDATED_MDBC.md)
 for matched results and the distinction from geometric no-penetration.
 `UpdatedMDBCNoPenetration` adds a one-sided near-surface normal contact force.
 It applies equal and opposite forces to fluid and floating neighbors and uses

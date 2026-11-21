@@ -138,13 +138,15 @@ function enqueue_resolution_step!(domains,h::ResolutionHierarchy,state;
     for (idx,d) in enumerate(domains)
         p,s,q,qs = d.particles,d.support,d.predictor.particles,d.predictor.support
         step = ResolutionStep(state,d,corrector)
+        gradient,divergence = resolution_shifting_fields(s)
+        half_gradient,half_divergence = resolution_shifting_fields(qs)
         @cuda threads=128 blocks=cld(length(p),128) resolution_scatter_predictor_kernel!(p.Acceleration,s.dρdtI,s.ρₙ⁺,
             s.Positionₙ⁺,s.Velocityₙ⁺,q.Acceleration,qs.dρdtI,q.Density,q.Position,q.Velocity,q.ID,
             ResolutionStep(state,d.predictor,corrector),Int32(length(p)),
-            p.Position,p.Density,p.Type,h.levels[idx],d.fine,s.∇Cᵢ,s.∇◌rᵢ,qs.∇Cᵢ,qs.∇◌rᵢ)
+            p.Position,p.Density,p.Type,h.levels[idx],d.fine,gradient,divergence,half_gradient,half_divergence)
         red = d.pool.reduction
         @cuda threads=REDUCE_THREADS blocks=red.nblocks resolution_standard_corrector_kernel!(p.Position,p.Velocity,
-            p.Acceleration,p.Density,s.dρdtI,s.ρₙ⁺,s.Positionₙ⁺,s.Velocityₙ⁺,p.Type,s.∇Cᵢ,s.∇◌rᵢ,
+            p.Acceleration,p.Density,s.dρdtI,s.ρₙ⁺,s.Positionₙ⁺,s.Velocityₙ⁺,p.Type,gradient,divergence,
             ResolutionArithmeticStep{eltype(p.Density)}(step),d.kernel,d.constants,d.boundary_mode,red.partial,damping,Int32(length(p)),d.predictor.support.PairSignal)
     end
     if leaf.attachment !== nothing

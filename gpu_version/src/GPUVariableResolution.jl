@@ -28,15 +28,16 @@ function scatter_predictor_kernel!(acceleration,rate,rhop,sorted_acceleration,so
 end
 
 "First-order MLS in coordinates scaled by h, with a normalized SPH fallback."
-@inline function reconstruct_state(query, position, velocity, density, types, starts, gridarg,
-        kernel, constants, limits, fine)
+@inline function reconstruct_state(query::SVector{D}, position, velocity, density, types, starts, gridarg,
+        kernel, constants, limits, fine) where D
     grid = load_grid(gridarg)
     coordinates = cell_coords(query, kernel.H⁻¹)
-    empty_value = SVector{3,Float64}(constants.ρ₀, 0, 0)
+    N = D + 1
+    empty_value = SVector{N,Float64}(constants.ρ₀, Tuple(zero(query))...)
     in_grid(grid, coordinates) || return (empty_value, false, 0.0, Inf)
     cell = linear_cell(grid, coordinates)
-    matrix = zero(SMatrix{3,3,Float64,9})
-    rhs = zero(SMatrix{3,3,Float64,9})
+    matrix = zero(SMatrix{N,N,Float64,N*N})
+    rhs = zero(SMatrix{N,N,Float64,N*N})
     saturation, nearest = 0.0, Inf
     for row in cell_rows(grid)
         first, last = row_range(grid, starts, cell, row)
@@ -47,15 +48,15 @@ end
             distance_squared = dot(displacement, displacement)
             distance_squared <= kernel.H² || continue
             q = eltype(density)(sqrt(distance_squared) * kernel.h⁻¹)
-            gradient = ∇Wᵢⱼ(kernel, q, SVector{2,eltype(density)}(displacement))
+            gradient = ∇Wᵢⱼ(kernel, q, SVector{D,eltype(density)}(displacement))
             if is_wall(kind) || kind == Floating
                 saturation -= Float64(constants.m₀ / constants.ρ₀) * dot(displacement, gradient)
             elseif kind == Fluid && !buffer_particle(position[j], limits, fine)
                 volume = Float64(constants.m₀) / Float64(density[j])
                 saturation -= volume * dot(displacement, gradient)
                 nearest = min(nearest, distance_squared)
-                basis = SVector(1.0, -displacement[1] / kernel.h, -displacement[2] / kernel.h)
-                value = SVector{3,Float64}(density[j], velocity[j][1], velocity[j][2])
+                basis = SVector{N,Float64}(1.0, Tuple(-displacement / kernel.h)...)
+                value = SVector{N,Float64}(density[j], Tuple(velocity[j])...)
                 weight = volume * Float64(Wᵢⱼ(kernel,q))
                 matrix += weight * (basis * transpose(basis))
                 rhs += weight * (basis * transpose(value))
@@ -64,17 +65,21 @@ end
     end
     shepard = matrix[1,1]
     shepard > 0.05 || return (empty_value, false, saturation, nearest)
-    value = SVector(rhs[1,1],rhs[1,2],rhs[1,3]) / shepard
+    value = rhs[1,:] / shepard
     # h scaling makes this rank check independent of particle spacing. A thin
     # free-surface support can be singular while its Shepard value is usable.
-    if abs(det(matrix)) > 1e-8 * shepard^3
-        weights = matrix \ SVector(1.0,0.0,0.0)
+    if abs(det(matrix)) > 1e-8 * shepard^N
+        weights = D == 2 ? matrix \ SVector(1.0, 0.0, 0.0) : inv(matrix)[:,1]
         reconstructed = transpose(rhs) * weights
         if all(isfinite,reconstructed) && 0.7constants.ρ₀ < reconstructed[1] < 1.3constants.ρ₀
             value = reconstructed
         end
     end
     return (value, true, saturation, nearest)
+end
+
+@inline function reconstructed_velocity(value, ::Type{SVector{D,T}}) where {D,T}
+    return SVector{D,T}(ntuple(d -> value[d + 1], Val(D)))
 end
 
 function reconstruct_buffers_kernel!(position, velocity, density, types,
@@ -87,7 +92,7 @@ function reconstruct_buffers_kernel!(position, velocity, density, types,
             source_density,source_types,starts,grid,kernel,constants,source_limits,source_fine)
         if valid
             density[i] = value[1]
-            velocity[i] = SVector{2,eltype(density)}(value[2],value[3])
+            velocity[i] = reconstructed_velocity(value, eltype(velocity))
         end
     end
     return nothing
@@ -131,8 +136,8 @@ function interface_flux_kernel!(points, normals, widths, accumulated_mass,
             source_density,source_types,starts,grid,kernel,constants,source_limits,source_fine)
         wet = saturation > 1.5 || nearest < min(constants.dx,target_constants.dx)^2
         valid && wet || return nothing
-        incoming_mass = -value[1] * ((value[2]-interface_velocity[1])*normal[1] +
-            (value[3]-interface_velocity[2])*normal[2]) * widths[i] * dt
+        incoming_mass = -value[1] * dot(reconstructed_velocity(value, typeof(point)) - interface_velocity,
+            normal) * widths[i] * dt
         m0 = Float64(target_constants.m₀)
         dx = Float64(target_constants.dx)
         denom = value[1] * widths[i]
@@ -150,7 +155,7 @@ function interface_flux_kernel!(points, normals, widths, accumulated_mass,
             end
             inward = 0.5dx + (denom > 0 ? clamp((budget - m0) / denom, 0.0, dx) : 0.0)
             position[slot] = point - inward * normal
-            velocity[slot] = SVector{2,eltype(density)}(value[2],value[3])
+            velocity[slot] = reconstructed_velocity(value, eltype(velocity))
             density[slot] = value[1]
             ids[slot] = CUDA.atomic_add!(pointer(next_id,1),id_stride)
             groups[slot] = fluid_marker

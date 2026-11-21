@@ -107,7 +107,7 @@ function effective_configuration(meta::SimulationMetaData{D, T, S, K, B}, kernel
             cell_subdivision=1,x_cell_subdivision=1,
             interaction_fastmath=false,radial_interactions=false,scalar_sps_viscosity=false,preload_interaction_types=false,force_fusion=false,
             interaction_path=:reference,viscosity_path=viscosity isa ZeroViscosity ? :disabled : :reference_ordered,cache_interaction_fields=false,
-            boundary_forces=false,lanes_per_particle=1,compact_buffers=false,async_output=false,
+            boundary_forces=D == 3 && B === UpdatedMDBC,lanes_per_particle=1,compact_buffers=false,async_output=false,
             output_buffer_bytes=0,max_steps_per_sync=meta.GPUSyncTimers ? 1 : clamp(meta.GPUMaxStepsPerSync,1,256)))
         if meta.VariableResolution.child !== nothing
             regions,hs = Any[],[kernel.h]
@@ -135,7 +135,7 @@ function effective_configuration(meta::SimulationMetaData{D, T, S, K, B}, kernel
                 (:GPUScalarSPSViscosity,meta.GPUScalarSPSViscosity,false),
                 (:GPUPreloadInteractionTypes,meta.GPUPreloadInteractionTypes,false),
                 (:GPUCacheInteractionFields,meta.GPUCacheInteractionFields,false),
-                (:GPUBoundaryForces,meta.GPUBoundaryForces,false),
+                (:GPUBoundaryForces,meta.GPUBoundaryForces,effective.boundary_forces),
                 (:GPUCompactBuffers,meta.GPUCompactBuffers,false),
                 (:GPUAsyncOutput,meta.GPUAsyncOutput,false),
                 (:GPUOutputBufferBytes,meta.GPUOutputBufferBytes,0),

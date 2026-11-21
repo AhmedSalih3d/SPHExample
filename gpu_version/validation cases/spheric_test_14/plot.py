@@ -30,7 +30,13 @@ def configuration_label(folder, key):
     with (folder / f"{key}.toml").open("rb") as stream:
         config = tomllib.load(stream)
     geometry = "Cartesian 2D, " if config.get("dimensions") == 2 else ""
-    return f"{geometry}dp = {1000*config['dx']:g} mm, tank width {2*config['half_width']:g} m"
+    spacing = f"{1000*config['dx']:g}"
+    if "fine_dx" in config:
+        spacing += f" / {1000*config['fine_dx']:g}"
+    label = f"{geometry}dp = {spacing} mm, tank width {2*config['half_width']:g} m"
+    if "sponge_width" in config:
+        label += f", sponge {config['sponge_width']:g} m"
+    return label
 
 
 def released_history(path):

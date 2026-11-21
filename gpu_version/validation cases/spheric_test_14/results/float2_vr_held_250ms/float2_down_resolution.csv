@@ -1,0 +1,5 @@
+time,iteration,coarse_fluid,fine_fluid,represented_fluid_mass,coarse_created,fine_created,coarse_retired,fine_retired,coarse_excluded,fine_excluded,coarse_nonfinite,fine_nonfinite
+0.0,0,237312,448560,4584.09375,0,0,23068,0,0,0,0,0
+0.1,520,237312,448560,4584.09375,0,0,23068,0,0,0,0,0
+0.2,1040,237312,448560,4584.09375,0,0,23068,0,0,0,0,0
+0.25,1300,237312,448560,4584.09375,0,0,23068,0,0,0,0,0

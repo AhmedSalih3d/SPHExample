@@ -161,12 +161,27 @@ function place_resolution_prescribed!(domain,step,fraction)
     return nothing
 end
 
-function identity_resolution_pose()
-    r,z,v = one(SMatrix{2,2,Float64,4}),zero(SMatrix{2,2,Float64,4}),zero(SVector{2,Float64})
+identity_resolution_pose() = identity_resolution_pose(Val(2))
+function identity_resolution_pose(::Val{D}) where D
+    r,z,v = one(SMatrix{D,D,Float64,D*D}),zero(SMatrix{D,D,Float64,D*D}),zero(SVector{D,Float64})
     return MotionPose(r,v,z,v,z,v)
 end
 
 make_resolution_attachment(::Nothing,args...;kwargs...) = nothing
+make_resolution_attachment(::Nothing,::Vector{SPHGeometry{3,T}},host,constants;time) where T = nothing
+
+function make_resolution_attachment(config,geometry::Vector{SPHGeometry{3,T}},host,constants;time) where T
+    selected = findall(==(config.marker),host.GroupMarker)
+    selected = selected[sortperm(host.ID[selected])]
+    slots = zeros(Int32,length(host))
+    slots[selected] = Int32.(eachindex(selected))
+    floating = FloatingArrays(geometry,host,constants;position_type=Float64,time)
+    center = only(Array(floating.center))
+    return (;slots=CuArray(slots),scratch=CUDA.zeros(Int32,length(host)),indices=CuArray(Int32.(selected)),
+        reference=CuArray(host.Position[selected]),ghosts=CuArray(host.GhostPoints[selected]),
+        center_reference=center,motion=nothing,floating,clearance=config.clearance)
+end
+
 function make_resolution_attachment(config,geometry,host,constants;time)
     selected = findall(==(config.marker),host.GroupMarker)
     selected = selected[sortperm(host.ID[selected])]
@@ -262,11 +277,39 @@ function resolution_body_particles_kernel!(x,v,ghosts,normals,indices,reference,
     return nothing
 end
 
-function place_resolution_body!(domain,step)
+function resolution_fixed_body_particles_kernel!(x,v,ghosts,indices,reference,reference_ghosts,
+        center_reference,center,velocity,orientation,omega,clearance,step,n)
+    GPUStepState.step_active(step) || return nothing
+    slot = thread_index()
+    @inbounds if slot <= n
+        i = indices[slot]
+        q = SVector{4,Float64}(orientation[1])
+        offset = GPUFloating.rotate_vector(q,reference[slot]-center_reference)
+        position = center[1]+offset
+        if !inside_box(position,clearance.lower,clearance.upper)
+            CUDA.atomic_xchg!(pointer(step.i,GPUStepState.I_STOP),RESOLUTION_BODY_CLEARANCE_ERROR)
+            return nothing
+        end
+        x[i],v[i] = position,velocity[1]+cross(omega[1],convert(eltype(v),offset))
+        # UpdatedMDBC rotates its reference-frame normal itself.
+        ghosts[i] = center[1]+GPUFloating.rotate_vector(q,reference_ghosts[slot]-center_reference)
+    end
+    return nothing
+end
+
+function place_resolution_body!(domain,step; half=false)
     a,p = domain.attachment,domain.particles
     n = length(a.indices)
-    @cuda threads=128 blocks=cld(n,128) resolution_body_particles_kernel!(p.Position,p.Velocity,p.GhostPoints,p.GhostNormals,
-        a.indices,a.reference,a.ghosts,a.normals,a.pose,step,Int32(n))
+    if hasproperty(a,:clearance)
+        f = a.floating
+        @cuda threads=128 blocks=cld(n,128) resolution_fixed_body_particles_kernel!(p.Position,p.Velocity,p.GhostPoints,
+            a.indices,a.reference,a.ghosts,a.center_reference,half ? f.center_half : f.center,
+            half ? f.velocity_half : f.velocity,half ? f.orientation_half : f.orientation,
+            half ? f.omega_half : f.omega,a.clearance,step,Int32(n))
+    else
+        @cuda threads=128 blocks=cld(n,128) resolution_body_particles_kernel!(p.Position,p.Velocity,p.GhostPoints,p.GhostNormals,
+            a.indices,a.reference,a.ghosts,a.normals,a.pose,step,Int32(n))
+    end
     return nothing
 end
 
@@ -297,12 +340,13 @@ function update_resolution_floating!(domain,step,final;limits=nothing)
     launch_floating_forces!(f,p.Acceleration,p.Position,p.Type,p.GroupMarker,
         final ? f.center_half : f.center,domain.constants.m₀,step)
     launch_floating_springs!(f,step,final)
-    if !final
+    if !final && limits isa AttachedResolutionLimits
         device = (;f.pause,f.velocity,f.omega,f.force,f.mass,f.inertia)
         @cuda threads=1 resolution_floating_dt_kernel!(device,a.center_reference,limits.reference,step,
             Float64(domain.constants.dx),Float64(domain.constants.g))
     end
-    launch_floating_update!(f,ResolutionArithmeticStep{eltype(p.Density)}(step),domain.constants.g,final;spring_forces=false)
+    launch_floating_update!(f,ResolutionArithmeticStep{eltype(p.Density)}(step),domain.constants.g,final;
+        spring_forces=false,cache_derivative=domain.boundary_mode isa ClonedPressureBoundary)
     return nothing
 end
 
@@ -372,8 +416,10 @@ function initialize_resolution_attachment!(fine,limits,state)
     a = fine.attachment
     a === nothing && return nothing
     step = ResolutionStep(state,fine,0)
-    sample_resolution_body!(a,step,0.0)
+    limits isa AttachedResolutionLimits && sample_resolution_body!(a,step,0.0)
     place_resolution_body!(fine,step)
-    @cuda threads=1 resolution_frame_kernel!(limits.frames,a.pose,limits.reference,step,Inf,true)
+    if limits isa AttachedResolutionLimits
+        @cuda threads=1 resolution_frame_kernel!(limits.frames,a.pose,limits.reference,step,Inf,true)
+    end
     return nothing
 end

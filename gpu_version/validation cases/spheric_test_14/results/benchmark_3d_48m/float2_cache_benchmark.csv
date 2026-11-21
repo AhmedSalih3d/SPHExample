@@ -1,0 +1,3 @@
+pair,duration_s,first_variant,baseline_s,variant_s,variant_speedup,baseline_steps,variant_steps,baseline_rebuilds,variant_rebuilds,baseline_readbacks,variant_readbacks,baseline_grid_readbacks,variant_grid_readbacks,baseline_fluid_frames,variant_fluid_frames,baseline_body_samples,variant_body_samples,max_heave_delta_mm,max_vertical_force_delta_n,max_position_delta_m,max_density_delta_kg_m3
+1,0.1,baseline,8.0115305,8.2108645,0.9757231409676776,260,260,1,1,21,21,0,0,2,2,21,21,1.9580710386435385e-5,0.001920000000041,7.769729895811789e-7,0.0061035156
+2,0.1,cache,8.369459,8.2355797,1.016256208412384,260,260,1,1,21,21,0,0,2,2,21,21,8.964548214862589e-6,0.0017700000000218097,7.180494378370273e-7,0.0072021484

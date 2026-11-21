@@ -1991,10 +1991,11 @@ function RunSimulation(;SimGeometry::Vector{SPHGeometry{Dimensions, FloatType}},
     sample_floating = SimStateSampling !== nothing && get(SimStateSampling, :floating_history, false)
     if SimStateSampling !== nothing
         times = SimStateSampling.times
-        SimMetaData.VariableResolution === nothing && !isempty(times) &&
+        independent_body_history = Dimensions == 3 && sample_floating && SimMetaData.GPUClipTimeStepToOutput
+        (SimMetaData.VariableResolution === nothing || independent_body_history) && !isempty(times) &&
             all(isfinite, times) && all(>(0), diff(times)) && SimMetaData.TotalTime < first(times) &&
             last(times) <= SimMetaData.SimulationTime ||
-            throw(ArgumentError("State sampling requires fixed resolution and strictly increasing deadlines within the run"))
+            throw(ArgumentError("State sampling requires strictly increasing deadlines within the run; variable resolution supports only clipped 3D floating histories"))
     end
     CUDA.functional() || error("CUDA is not functional on this machine; use the CPU package SPHExample instead.")
     if SimOutputClipTimes !== nothing
@@ -2059,7 +2060,7 @@ function RunSimulation(;SimGeometry::Vector{SPHGeometry{Dimensions, FloatType}},
     if SimMetaData.VariableResolution !== nothing
         return run_variable_resolution(; SimGeometry,SimMetaData,SimConstants,SimKernel,SimLogger,SimParticles,
             SimViscosity,SimDensityDiffusion,SimTimeStepping,ParticleNormalsPath,SimMeasurements,SimExternalForces,
-            SimDamping,SimRotation,SimMotion,ParaviewPressureRange)
+            SimDamping,SimRotation,SimMotion,ParaviewPressureRange,SimStateSampling)
     end
     SimRotation === nothing || (Dimensions == 2 && BMode === NoMDBC && SimMetaData.Periodicity === nothing) ||
         throw(ArgumentError("SimRotation currently requires a nonperiodic 2D DBC case (NoMDBC)"))
