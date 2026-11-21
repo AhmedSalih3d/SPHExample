@@ -1,8 +1,8 @@
 # Floating UpdatedMDBC: implementation and matched heave controls
 
-Floating `UpdatedMDBC` is now an optional experimental mode in the uniform GPU
-solver. It improves two of the three heave releases and worsens one, so the
-manual and automated full-case defaults remain `SimpleMDBC`.
+Floating `UpdatedMDBC` improves two of the three heave releases in this study.
+It is now the default for Test 14's full 3D case. The subsequent
+[normal contact study](NO_PENETRATION.md) tests the optional penetration correction.
 
 ![Matched boundary and timestep comparisons](results/floating_updated_study/heave_comparison.png)
 
@@ -53,10 +53,8 @@ tests. Inspection of the current official
 shows that its separate no-penetration branch explicitly excludes floating
 neighbors (`!ftp2`). It is not simply another pressure-cloning formula.
 
-That geometric correction has **not** been added to this solver. Applying an
-independent fluid velocity correction against a free body would require a
-consistent reaction impulse and energy assessment. Mirrored no-slip velocity
-does not by itself guarantee that fluid particle centers cannot cross a surface.
+The [normal contact option](NO_PENETRATION.md) uses pair forces to give the free
+body a reaction as the fluid approaches or overlaps the surface.
 
 `UpdatedMDBCWithImpedance` is separately tested as an existing **experimental
 pressure response**, adding `rho0*c0*max(0,(u_wall-u_ghost) dot n)` on approach.
@@ -132,7 +130,6 @@ pvpython --force-offscreen-rendering --disable-registry "validation cases/spheri
 Completed cases resume without overwriting particle histories. Results and
 metrics are in [results/floating_updated_study](results/floating_updated_study);
 large particle histories and generated ParaView launchers stay in ignored runs.
-The geometric no-penetration operator remains separate future work.
 
 ## Verification
 

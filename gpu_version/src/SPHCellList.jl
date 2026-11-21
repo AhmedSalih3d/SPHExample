@@ -645,6 +645,7 @@ The low-level constructor keeps `periodic_images = false`. Pass `kernel` to a
 metadata constructor to resolve the short-period query fallback before allocation.
 """
 function GPUSupportArrays{D, T}(n::Integer; position_type::Type{TP} = T, updated_mdbc::Bool = false,
+                              no_penetration::Bool = false,
                               shifting::Bool = true, shifting_metric::Bool = shifting, reuse_predictors::Bool = false,
                               share_pos_cells::Bool = reuse_predictors,
                               cache_interaction_fields::Bool = false,
@@ -669,6 +670,10 @@ function GPUSupportArrays{D, T}(n::Integer; position_type::Type{TP} = T, updated
     boundary_data = updated_mdbc ? (; active = CUDA.ones(Bool, boundary_count),
         velocity = CUDA.zeros(SVector{D, T}, boundary_count),
         tangent_velocity = CUDA.zeros(SVector{D, T}, boundary_count), slots = boundary_slots) : nothing
+    if no_penetration
+        updated_mdbc || throw(ArgumentError("Normal contact requires UpdatedMDBC state"))
+        boundary_data = merge(boundary_data, (; contact_offsets = CUDA.zeros(SVector{D,T}, boundary_count)))
+    end
     inverse_density = cache_interaction_fields ? CUDA.zeros(T, n) : nothing
     pressure = cache_interaction_fields ? CUDA.zeros(T, n) : nothing
     inverse_half = cache_interaction_fields && fuse_predictor ? similar(inverse_density) : inverse_density
@@ -707,7 +712,8 @@ function GPUSupportArrays{D, T}(gpu::GPUParticles{D, T}, meta::SimulationMetaDat
     position_type(gpu) === position_float_type(meta) ||
         throw(ArgumentError("GPU positions and support-array metadata must use the same precision"))
     return GPUSupportArrays{D, T}(length(gpu); position_type = position_type(gpu),
-        updated_mdbc = B <: ClonedPressureBoundary, shifting = !meta.GPUCompactBuffers || S <: PlanarShifting,
+        updated_mdbc = B <: ClonedPressureBoundary, no_penetration = B === UpdatedMDBCNoPenetration,
+        shifting = !meta.GPUCompactBuffers || S <: PlanarShifting,
         shifting_metric = !meta.GPUCompactBuffers,
         cache_interaction_fields = meta.GPUCacheInteractionFields,
         fuse_predictor,
@@ -750,7 +756,8 @@ end
 
 function GPUSupportArrays{D, T}(n::Integer, meta::SimulationMetaData{D, T, S, K, B}; kernel=nothing) where {D, T, S, K, B}
     return GPUSupportArrays{D, T}(n; position_type = position_float_type(meta),
-        updated_mdbc = B <: ClonedPressureBoundary, shifting = !meta.GPUCompactBuffers || S <: PlanarShifting,
+        updated_mdbc = B <: ClonedPressureBoundary, no_penetration = B === UpdatedMDBCNoPenetration,
+        shifting = !meta.GPUCompactBuffers || S <: PlanarShifting,
         shifting_metric = !meta.GPUCompactBuffers,
         share_pos_cells = meta.GPUCompactBuffers,
         cache_interaction_fields = meta.GPUCacheInteractionFields,
@@ -2014,6 +2021,11 @@ function RunSimulation(;SimGeometry::Vector{SPHGeometry{Dimensions, FloatType}},
         throw(ArgumentError("Pairwise timestep limiter provenance is not implemented; set GPULegacyTimestep=true for the legacy diagnostic"))
     validate_cleaning(SimDivergenceCleaning,SimMetaData,SimKernel,SimTimeStepping;
         open_boundary=SimOpenBoundaries,floating=any(g -> g.Type == Floating,SimGeometry))
+    if BMode === UpdatedMDBCNoPenetration
+        SimMetaData.VariableResolution === nothing && SimMetaData.Periodicity === nothing &&
+            SimTimeStepping isa SymplecticTimeStepping && SMode === NoShifting ||
+            throw(ArgumentError("UpdatedMDBCNoPenetration requires uniform, nonperiodic symplectic stepping without shifting"))
+    end
     if SimMetaData.VariableResolution !== nothing && SimTimeStepping isa DualSPHysicsSymplectic && SimTimeStepping.respect_stability_limits
         throw(ArgumentError("Current-stage timestep retries require uniform resolution; strict variable-resolution stepping is not implemented"))
     end
@@ -2161,8 +2173,8 @@ function RunSimulation(;SimGeometry::Vector{SPHGeometry{Dimensions, FloatType}},
 
     if BMode <: ClonedPressureBoundary
         if any(==(Floating), SimParticles.Type)
-            BMode in (UpdatedMDBC, UpdatedMDBCWithImpedance) ||
-                throw(ArgumentError("Floating cloned-pressure boundaries currently support UpdatedMDBC or UpdatedMDBCWithImpedance"))
+            BMode in (UpdatedMDBC, UpdatedMDBCWithImpedance, UpdatedMDBCNoPenetration) ||
+                throw(ArgumentError("Floating cloned-pressure boundaries require an UpdatedMDBC mode"))
             SimRigidBodyDynamics === nothing && SimMetaData.Periodicity === nothing ||
                 throw(ArgumentError("Floating cloned-pressure boundaries currently require nonperiodic ordinary rigid bodies"))
             all(g -> g.Type != Floating || g.Floating.Constraints === nothing || !g.Floating.Constraints.active, SimGeometry) ||

@@ -1269,6 +1269,10 @@ consistently at the evaluated stages. Constraints and native multibody dynamics
 remain unsupported. The rotating floating-ghost path does not extend the
 variable-resolution solver. See the [floating UpdatedMDBC investigation](validation%20cases/spheric_test_14/FLOATING_UPDATED_MDBC.md)
 for matched results and the distinction from geometric no-penetration.
+`UpdatedMDBCNoPenetration` adds a one-sided near-surface normal contact force.
+It applies equal and opposite forces to fluid and floating neighbors and uses
+the same mirrored no-slip treatment as UpdatedMDBC. See the
+[Test 14 comparison](validation%20cases/spheric_test_14/NO_PENETRATION.md).
 See the [Test 14 heave investigation](validation%20cases/spheric_test_14/MDBC_HEAVE.md)
 for an optional original-mDBC case and matched DBC controls.
 The [full 3D Test 14 case](validation%20cases/spheric_test_14/FULL_3D_MDBC.md)

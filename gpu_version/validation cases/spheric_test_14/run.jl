@@ -1,11 +1,11 @@
 include(joinpath(@__DIR__, "case.jl"))
 include(joinpath(@__DIR__, "full_case.jl"))
 
-function setup(release; dx = 0.025, half_width = 1.2, duration = 4.5, save, boundary_mode = SimpleMDBC)
+function setup(release; dx = 0.025, half_width = 1.2, duration = 4.5, save, boundary_mode = UpdatedMDBC)
     return build_full_case(release; dx, half_width, duration, save_location = save, boundary_mode)
 end
 
-function run_case(release; dx, half_width, duration, boundary_mode = SimpleMDBC)
+function run_case(release; dx, half_width, duration, boundary_mode = UpdatedMDBC)
     tag = "full_$(nameof(boundary_mode))_dp$(dx)_half$(half_width)_h2.0_t$(duration)"
     save = joinpath(@__DIR__, "runs", tag, release.name)
     output = joinpath(@__DIR__, "results", tag)
@@ -19,9 +19,10 @@ function main(args)
     dx, half_width, duration = (i <= length(positional) ? parse(Float64, positional[i]) : value
         for (i, value) in enumerate((0.025, 1.2, 4.5)))
     cases = length(positional) >= 4 && positional[4] != "all" ? filter(r -> r.name == positional[4], RELEASES) : RELEASES
-    mode_name = length(positional) == 5 ? positional[5] : "SimpleMDBC"
-    modes = Dict(string(nameof(mode)) => mode for mode in (SimpleMDBC,NoMDBC,UpdatedMDBC,UpdatedMDBCWithImpedance))
-    haskey(modes,mode_name) || throw(ArgumentError("Choose SimpleMDBC, NoMDBC, UpdatedMDBC or experimental UpdatedMDBCWithImpedance"))
+    mode_name = length(positional) == 5 ? positional[5] : "UpdatedMDBC"
+    modes = Dict(string(nameof(mode)) => mode for mode in
+        (SimpleMDBC, NoMDBC, UpdatedMDBC, UpdatedMDBCWithImpedance, UpdatedMDBCNoPenetration))
+    haskey(modes, mode_name) || throw(ArgumentError("Unknown boundary mode: $mode_name"))
     boundary_mode = modes[mode_name]
     isempty(cases) && error("Release must be float1_down, float1_up or float2_down")
 

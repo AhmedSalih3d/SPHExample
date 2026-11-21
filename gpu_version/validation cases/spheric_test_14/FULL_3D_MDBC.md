@@ -1,8 +1,8 @@
 # Full 3D Test 14 with floating mDBC
 
 The subsequent [floating UpdatedMDBC study](FLOATING_UPDATED_MDBC.md) adds an
-optional experimental free-body pressure-cloning/no-slip mode. The SimpleMDBC
-results below remain the baseline; its defaults are retained.
+experimental free-body pressure cloning and no-slip treatment. UpdatedMDBC is
+now the 3D case default. The SimpleMDBC results below are the original baseline.
 
 The updated heave configuration now runs the complete 3D float profiles from the
 [SPHERIC Test 14 specification](https://www.spheric-sph.org/tests/test-14), with

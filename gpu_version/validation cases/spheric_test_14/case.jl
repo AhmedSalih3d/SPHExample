@@ -18,7 +18,7 @@ end
 
 function sample_geometry(release, constants::SimulationConstants{T}, kernel; dx, half_width, depth,
                          wall_top_z = 0.2, pause_time = 0.0, boundary_mode = NoMDBC) where {T}
-    boundary_mode in (NoMDBC, SimpleMDBC, UpdatedMDBC, UpdatedMDBCWithImpedance) ||
+    boundary_mode in (NoMDBC, SimpleMDBC, UpdatedMDBC, UpdatedMDBCWithImpedance, UpdatedMDBCNoPenetration) ||
         throw(ArgumentError("Unsupported floating boundary mode"))
     all(isfinite, (dx, half_width, depth, wall_top_z)) && dx > 0 && half_width >= 0.8 && depth > 0 && wall_top_z >= 0 ||
         throw(ArgumentError("Invalid spacing or tank dimensions"))

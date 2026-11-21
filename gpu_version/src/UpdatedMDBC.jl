@@ -23,6 +23,27 @@ end
 @inline boundary_viscous_velocity(data, velocity, types, i, slot) = @inbounds is_pressure_boundary(types[i]) ?
     (slot == 0 ? zero(eltype(velocity)) : data.tangent_velocity[slot]) : velocity[i]
 
+@inline contact_offsets(data) = hasproperty(data, :contact_offsets) ? data.contact_offsets : nothing
+
+# The physical surface is halfway between a boundary particle and its ghost.
+# Return a normal acceleration per unit neighbor volume. The caller weights
+# both sides of a pair with the opposite particle's interaction mass.
+@inline function normal_contact_rate(offset::SVector{D,T}, separation, relative_velocity, dx, sound_speed) where {D,T}
+    distance_squared = dot(separation, separation)
+    length_squared = dot(offset, offset)
+    if !(zero(T) < length_squared < (T(1.75)*dx)^2 && distance_squared < (T(1.25)*dx)^2)
+        return zero(offset)
+    end
+    length_offset = sqrt(length_squared)
+    normal = offset / length_offset
+    depth = dot(separation, normal) / length_offset
+    depth < T(0.75) || return zero(offset)
+    ramp = clamp(T(3) - T(4)*depth, zero(T), one(T))
+    inward_speed = max(zero(T), -dot(relative_velocity, normal))
+    overlap = clamp((T(0.5) - depth)*length_offset/dx, zero(T), T(0.25))
+    return (sound_speed/dx * ramp * (inward_speed + sound_speed*overlap)) * normal
+end
+
 # An infinity-norm condition estimate uses only fixed-size arithmetic, including
 # on CUDA (no LAPACK/SVD). DualSPHysics uses dx^2 * norm(A, Inf) * norm(inv(A), Inf).
 @inline function mdbc_matrix_norm(A::SMatrix{N, N, T}) where {N, T}
@@ -169,6 +190,8 @@ function updated_mdbc_kernel!(Density::AbstractVector{T}, Position::AbstractVect
         data.active[state_slot] = active
         density = updated_ghost_density(A, b[:, 1], ρ₀, SimConstants.dx)
         normal = ParticleType[i] == Floating ? SVector{D,T}(gp - Position[i]) : GhostNormals[slot]
+        offsets = contact_offsets(data)
+        offsets === nothing || (offsets[state_slot] = normal)
         normal /= norm(normal)
         gravity = ConstructGravitySVector(normal, -g)
         # Interaction acceleration is not the prescribed wall acceleration.

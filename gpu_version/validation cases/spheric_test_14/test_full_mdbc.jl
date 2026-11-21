@@ -11,7 +11,7 @@ include(joinpath(@__DIR__, "run.jl"))
         @test mdbc.geometry[3].Floating.Constraints === nothing
         @test mdbc.geometry[3].Floating == dbc.geometry[3].Floating
         @test mdbc.geometry[3].Floating.RelativeWeight * mdbc.constants.m₀ * length(mdbc.geometry[3].Particles) ≈ release.mass rtol=2e-7
-        @test mdbc.metadata isa SimulationMetaData{3,Float32,NoShifting,NoKernelOutput,SimpleMDBC}
+        @test mdbc.metadata isa SimulationMetaData{3,Float32,NoShifting,NoKernelOutput,UpdatedMDBC}
         @test mdbc.metadata.OutputTimes == 0.005
         @test mdbc.viscosity isa Laminar
         @test mdbc.diffusion isa LinearDensityDiffusion
@@ -33,6 +33,6 @@ include(joinpath(@__DIR__, "run.jl"))
     @test build_full_case(first(RELEASES); dx = 0.05, boundary_mode = UpdatedMDBC).metadata isa
         SimulationMetaData{3,Float32,NoShifting,NoKernelOutput,UpdatedMDBC}
     @test_throws ArgumentError build_full_case(first(RELEASES); sponge_width = 1.1)
-    @test setup(first(RELEASES); dx = 0.05, duration = 0.01, save = "unused").boundary_mode == "SimpleMDBC"
+    @test setup(first(RELEASES); dx = 0.05, duration = 0.01, save = "unused").boundary_mode == "UpdatedMDBC"
 end
 end

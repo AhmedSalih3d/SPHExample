@@ -455,6 +455,7 @@ function interaction_kernel!(dρdtI, Acceleration, Kernel, KernelGradient, ∇C�
         Pᵢ = forces ? (viscous_dt === nothing ? interaction_pressure(Pressure,source_i,ρᵢ,typeᵢ,c₀,ρ₀,boundary_data,ρ₀⁻¹,BackgroundPressure) :
             dual_pressure(ρᵢ,SimConstants,Val(FastMath),ρ₀⁻¹)) : zero(T)
         wallᵢ = is_wall(typeᵢ)
+        offsets = contact_offsets(boundary_data)
 
         c      = CellID[source_i]
         own_lo = CellStart[c] + Int32(1)
@@ -575,6 +576,15 @@ function interaction_kernel!(dρdtI, Acceleration, Kernel, KernelGradient, ∇C�
                         end
 
                         if forces
+                            if offsets !== nothing
+                                if typeᵢ == Fluid && slotⱼ != 0
+                                    contact = normal_contact_rate(offsets[slotⱼ], xᵢⱼ, vᵢⱼ, dx, c₀)
+                                    acc += (mass_j / ρ₀ * SPHKernels.Wᵢⱼ(SimKernel, q)) * contact
+                                elseif typeᵢ == Floating && slotᵢ != 0 && ParticleType[j] == Fluid
+                                    contact = normal_contact_rate(offsets[slotᵢ], -xᵢⱼ, -vᵢⱼ, dx, c₀)
+                                    acc -= (mass_j / ρ₀ * SPHKernels.Wᵢⱼ(SimKernel, q)) * contact
+                                end
+                            end
                             viscous_velocity = boundary_data === nothing ? vᵢⱼ :
                                 viscous_vᵢ - boundary_viscous_velocity(boundary_data, Velocity, ParticleType, j, slotⱼ)
                             if viscous_dt !== nothing && SimViscosity isa ArtificialViscosity

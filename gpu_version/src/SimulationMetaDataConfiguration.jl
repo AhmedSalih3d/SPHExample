@@ -6,7 +6,7 @@ using TimerOutputs
 
 export SimulationMetaData, UpdateMetaData!, ShiftingMode, NoShifting, PlanarShifting,
        KernelOutputMode, NoKernelOutput, StoreKernelOutput,
-       MDBCMode, NoMDBC, SimpleMDBC, UpdatedMDBC, UpdatedMDBCWithImpedance, DBCPlus, DBCPlusImpedance, ClonedPressureBoundary,
+       MDBCMode, NoMDBC, SimpleMDBC, UpdatedMDBC, UpdatedMDBCWithImpedance, UpdatedMDBCNoPenetration, DBCPlus, DBCPlusImpedance, ClonedPressureBoundary,
        LogMode, NoLog, StoreLog,
        TimeSteppingMode, SymplecticTimeStepping, SingleNeighborTimeStepping, DualSPHysicsSymplectic,
        OUTPUT_VARIABLES, DEFAULT_OUTPUT_VARIABLES, resolve_output_variables!, position_float_type
@@ -83,7 +83,13 @@ velocity for viscosity. Requires ghost points and normals.
 """
 struct UpdatedMDBCWithImpedance <: ClonedPressureBoundary end
 
-@inline mirror_wall_viscosity(mode) = mode isa Union{UpdatedMDBC,UpdatedMDBCWithImpedance}
+"""
+UpdatedMDBC with one-sided normal contact forces near the reflected surface.
+Fluid and floating neighbors receive equal and opposite pair forces.
+"""
+struct UpdatedMDBCNoPenetration <: ClonedPressureBoundary end
+
+@inline mirror_wall_viscosity(mode) = mode isa Union{UpdatedMDBC,UpdatedMDBCWithImpedance,UpdatedMDBCNoPenetration}
 @inline normal_wall_impedance(mode) = mode isa Union{DBCPlusImpedance,UpdatedMDBCWithImpedance}
 
 abstract type LogMode end

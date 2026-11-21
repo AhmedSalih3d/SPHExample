@@ -1,4 +1,4 @@
-# Full 3D geometry of SPHERIC Test 14.
+﻿# Full 3D geometry of SPHERIC Test 14.
 # julia --project=. -t 2,0 "validation cases/spheric_test_14/manual_case.jl"
 include(joinpath(@__DIR__, "case.jl"))
 
@@ -17,7 +17,7 @@ function run_manual_case(release; visualize_in_paraview)
     output_interval = 0.005 # 200 Hz, matching the experiment.
     pause_time = 0.0 # Optional initial hold; the benchmark releases at t = 0.
 
-    boundary_mode = SimpleMDBC # Or UpdatedMDBC; use NoMDBC for the matched DBC control.
+    boundary_mode = UpdatedMDBC # Select UpdatedMDBCNoPenetration to add normal contact.
     kernel_family = WendlandC2()
     kernel_h_factor = 2.0
     SimConstants = SimulationConstants{FloatType}(Dimensions;
@@ -31,7 +31,7 @@ function run_manual_case(release; visualize_in_paraview)
     save_location = joinpath(@__DIR__, "runs", run_name, release_name)
     result_location = joinpath(@__DIR__, "results", run_name)
 
-    boundary_mode in (NoMDBC, SimpleMDBC, UpdatedMDBC, UpdatedMDBCWithImpedance) ||
+    boundary_mode in (NoMDBC, SimpleMDBC, UpdatedMDBC, UpdatedMDBCWithImpedance, UpdatedMDBCNoPenetration) ||
         throw(ArgumentError("Unsupported floating boundary mode"))
     all(isfinite, (dx, depth, half_width, wall_top_z, duration, output_interval, pause_time, sponge_rate, kernel_h_factor)) &&
         dx > 0 && depth > 0 && half_width >= 0.8 && wall_top_z >= 0 && duration > 0 &&

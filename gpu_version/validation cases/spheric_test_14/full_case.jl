@@ -1,19 +1,17 @@
 # Definitions only; load case.jl before this file.
 """
-    build_full_case(release; boundary_mode=SimpleMDBC, ...)
+    build_full_case(release; boundary_mode=UpdatedMDBC, ...)
 
 Full 3D Test 14 float with the experimental mass and center of gravity, free in
 all six rigid degrees of freedom. Boundary treatment and physical viscosity match
 the updated planar controls. Domain size and resolution remain independent inputs.
 """
 function build_full_case(release; dx = 0.025, half_width = 1.2, depth = 0.8, wall_top_z = 0.25,
-        kernel_family = WendlandC2(), kernel_h_factor = 2., boundary_mode = SimpleMDBC,
+        kernel_family = WendlandC2(), kernel_h_factor = 2., boundary_mode = UpdatedMDBC,
         viscosity = Laminar(), diffusion = LinearDensityDiffusion(), c0 = 25., cfl = 0.2,
         sponge_width = 0.5, sponge_rate = 12., duration = 4.5, output_interval = 0.005,
         pause_time = 0., output_variables = ["Type", "Velocity", "Pressure"],
         save_location = joinpath(@__DIR__, "runs", "full_mdbc", release.name))
-    boundary_mode in (NoMDBC, SimpleMDBC, UpdatedMDBC, UpdatedMDBCWithImpedance) ||
-        throw(ArgumentError("Use NoMDBC, SimpleMDBC, UpdatedMDBC or experimental UpdatedMDBCWithImpedance"))
     all(isfinite, (duration, output_interval, kernel_h_factor, pause_time, sponge_rate)) &&
         duration > 0 && output_interval > 0 && kernel_h_factor > 0 && pause_time >= 0 && sponge_rate >= 0 ||
         throw(ArgumentError("Invalid full-case time, kernel or damping settings"))
