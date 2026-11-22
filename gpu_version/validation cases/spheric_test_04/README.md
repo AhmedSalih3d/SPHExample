@@ -6,7 +6,9 @@ Run from `gpu_version` with an NVIDIA GPU:
 julia --project=. -t 2,0 "validation cases/spheric_test_04/manual_case.jl"
 ```
 
-Edit the settings at the bottom of [manual_case.jl](manual_case.jl). The
+Edit the settings at the top of [manual_case.jl](manual_case.jl). In your
+editor, select the whole file with `Ctrl+A`, then use your Julia
+execute-selection shortcut. The selection starts the run immediately. The
 default runs oscillation 1 for one 8.46 s period with 5 mm particle spacing
 and SimpleMDBC. Set `oscillation` to 1, 2, or 3 for velocity amplitudes
 0.131, 0.196, or 0.294 m/s. Set `visualize=true` to open ParaView or load
