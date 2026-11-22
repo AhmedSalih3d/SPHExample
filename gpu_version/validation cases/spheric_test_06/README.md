@@ -207,6 +207,11 @@ All simulation and analysis logic is Julia and uses the existing GPU solver.
   The CUDA graph path is used. Fixed/prescribed boundary accelerations are not
   evaluated because their trajectories do not depend on fluid forces.
 
+`UpdatedMDBC` force sampling uses the accepted wall density with the linear
+wall pressure law and reconstructs the mirrored tangential viscous velocity
+from fluid support at the moving ghost point. Both the force callback and
+saved-frame analysis use this treatment.
+
 `analyze_history` recomputes the instantaneous pressure and laminar pair
 forces from each accepted saved state. Only **square/fluid** pairs enter the
 load; tank and internal square forces are excluded. The pair formulas match

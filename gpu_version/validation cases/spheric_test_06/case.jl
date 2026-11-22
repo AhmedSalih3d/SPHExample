@@ -280,7 +280,7 @@ end
 
 """Pressure and selected viscous force on body particle i from fluid particle j."""
 @inline function pair_loads(position_i, position_j, velocity_i, velocity_j, density_i, density_j,
-        kernel, constants; viscosity_model = Laminar())
+        kernel, constants; viscosity_model = Laminar(), wall_pressure = nothing)
     separation = position_i - position_j
     distance_squared = dot(separation, separation)
     if !(0 < distance_squared < kernel.H²)
@@ -288,7 +288,7 @@ end
     end
     q = sqrt(distance_squared) * kernel.h⁻¹
     gradient = ∇Wᵢⱼ(kernel, q, separation)
-    pressure_i = EquationOfStateGamma7(density_i, constants.c₀, constants.ρ₀, inv(constants.ρ₀), constants.BackgroundPressure)
+    pressure_i = isnothing(wall_pressure) ? EquationOfStateGamma7(density_i, constants.c₀, constants.ρ₀, inv(constants.ρ₀), constants.BackgroundPressure) : wall_pressure
     pressure_j = EquationOfStateGamma7(density_j, constants.c₀, constants.ρ₀, inv(constants.ρ₀), constants.BackgroundPressure)
     pressure_force = -constants.m₀^2 * (pressure_i + pressure_j) / (density_i * density_j) * gradient
     viscosity, _ = compute_viscosity(viscosity_model, kernel, constants, nothing, separation,
@@ -298,10 +298,38 @@ end
     return pressure_force, constants.m₀ * wall_factor * viscosity
 end
 
+function updated_square_wall(i, center, half_size, fluid_cells, cell, position, velocity, density, kernel, constants)
+    relative = position[i] - center
+    gap = half_size - abs.(relative)
+    offset = SVector(ntuple(d -> isapprox(gap[d], minimum(gap); atol = 1e-12, rtol = 0) ?
+        2copysign(gap[d], relative[d]) : 0.0, 2))
+    ghost = position[i] + offset
+    gx, gy = cell(ghost)
+    weight = 0.0
+    speed_sum = zero(velocity[i])
+    active = false
+    for cy in gy-1:gy+1, cx in gx-1:gx+1
+        neighbors = get(fluid_cells, (cx, cy), nothing)
+        isnothing(neighbors) && continue
+        for j in neighbors
+            distance = norm(ghost - position[j])
+            distance < kernel.H || continue
+            active |= distance > 0
+            vw = constants.m₀ / density[j] * Wᵢⱼ(kernel, distance * kernel.h⁻¹)
+            speed_sum += vw * velocity[j]
+            weight += vw
+        end
+    end
+    active && weight > 0 || return nothing
+    normal = offset / norm(offset)
+    slip = velocity[i] - speed_sum / weight
+    return velocity[i] + slip - dot(slip, normal) * normal
+end
+
 """Integrate only body/fluid pairs; tank and internal solid forces are excluded."""
 function frame_loads(position, velocity, density, types, markers, kernel, constants;
         body_marker = 3, viscosity_model = Laminar(), reference_speed = 1.0,
-        reference_length = 1.0, span = 1.0)
+        reference_length = 1.0, span = 1.0, updated_square = nothing)
     all(x -> isfinite(x) && x > 0, (reference_speed, reference_length, span)) ||
         throw(ArgumentError("force reference speed, length, and span must be positive and finite"))
     fluid_cells = Dict{Tuple{Int,Int},Vector{Int}}()
@@ -314,13 +342,21 @@ function frame_loads(position, velocity, density, types, markers, kernel, consta
     viscous_force = zero(pressure_force)
     for i in eachindex(types)
         markers[i] == body_marker && types[i] == Int(Moving) || continue
+        wall_velocity = velocity[i]
+        wall_pressure = nothing
+        if !isnothing(updated_square)
+            wall_velocity = updated_square_wall(i, updated_square.center, updated_square.half_size,
+                fluid_cells, cell, position, velocity, density, kernel, constants)
+            isnothing(wall_velocity) && continue
+            wall_pressure = constants.c₀^2 * (density[i] - constants.ρ₀) + constants.BackgroundPressure
+        end
         ix, iy = cell(position[i])
         for cy in iy-1:iy+1, cx in ix-1:ix+1
             neighbors = get(fluid_cells, (cx, cy), nothing)
             neighbors === nothing && continue
             for j in neighbors
-                pressure, viscous = pair_loads(position[i], position[j], velocity[i], velocity[j],
-                    density[i], density[j], kernel, constants; viscosity_model)
+                pressure, viscous = pair_loads(position[i], position[j], wall_velocity, velocity[j],
+                    density[i], density[j], kernel, constants; viscosity_model, wall_pressure)
                 pressure_force += pressure
                 viscous_force += viscous
             end
@@ -342,8 +378,12 @@ function load_parameters(case)
 end
 
 function force_row(time, case, position, velocity, density, types, markers, kernel, constants)
+    updated_square = if get(case, :boundary_mode, NoMDBC) === UpdatedMDBC
+        displacement, _, _ = trajectory_state(case.motion.translation, time)
+        (; center = case.body_center + displacement, half_size = case.body_size / 2)
+    end
     loads = frame_loads(position, velocity, density, types, markers, kernel, constants;
-        body_marker = case.body_marker, viscosity_model = case.viscosity_model,
+        body_marker = case.body_marker, viscosity_model = case.viscosity_model, updated_square,
         reference_speed = case.reference_speed, reference_length = case.reference_length, span = case.span)
     return (; time, motion_time = time - get(case, :start_delay, 0.0), loads...)
 end

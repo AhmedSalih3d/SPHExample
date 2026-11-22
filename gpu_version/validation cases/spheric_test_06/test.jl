@@ -140,6 +140,15 @@ end
         Int.([Moving, Fluid, Fixed]), [3,2,1], kernel, constants;
         viscosity_model = ZeroViscosity())
     @test iszero(inviscid_loads.cd_viscous)
+    square = (; center = SVector(1.5, 2.5), half_size = SVector(0.5, 0.5))
+    wall_speed = SVector(0.3, 0.7)
+    corner_flow = SVector(2.02, 2.51)
+    updated = frame_loads([body, corner_flow], [wall_speed, rest], [999., 1000.],
+        Int.([Moving, Fluid]), [3, 2], kernel, constants; updated_square = square)
+    pf, vf = pair_loads(body, corner_flow, SVector(0.3, 1.4), rest, 999., 1000., kernel, constants;
+        wall_pressure = -constants.c₀^2)
+    @test SVector(updated.cd_pressure, updated.cy_pressure) ≈ -2pf / constants.ρ₀
+    @test SVector(updated.cd_viscous, updated.cy_viscous) ≈ -2vf / constants.ρ₀
     # Unevenly sampled linear functions must have their exact integral.
     @test bin_average([0.,0.01,0.3,1.], [1.,1.02,1.6,3.], 0.1, 0.8) ≈ 1.9
     @test_throws ArgumentError bin_average([0.,1.], [0.,1.], -0.01, 0.5)
@@ -227,6 +236,7 @@ if CUDA.functional()
             # Exercise the editable script with the same short setup, keeping all outputs temporary.
             manual_path = joinpath(@__DIR__, "manual_case.jl")
             manual_source = replace(read(manual_path, String),
+                r"(?m)^        boundary_mode\s*=.*$" => "        boundary_mode = NoMDBC",
                 "c₀  = 160.0" => "c₀  = 40.0",
                 "domain_padding = 2.0" => "domain_padding = 0.0",
                 "use_sponge     = true" => "use_sponge     = false",
@@ -239,7 +249,7 @@ if CUDA.functional()
                 "visualize_in_paraview = true" => "visualize_in_paraview = false",
                 "joinpath(@__DIR__, \"runs\", run_tag, run_name)" => repr(joinpath(directory, "manual")),
                 "joinpath(@__DIR__, \"runs\", run_tag, \"paraview_force_plot\")" => repr(joinpath(directory, "plots")),
-                "joinpath(@__DIR__, \"results\", run_tag)" => repr(joinpath(directory, "manual_results")))
+                r"joinpath\(@__DIR__, \"results\", run_tag(?:, run_name)?\)" => repr(joinpath(directory, "manual_results")))
             manual = include_string(ManualCaseSandbox, manual_source, manual_path)
             @test manual.case.constants === case.constants
             @test manual.case.counts == case.counts
