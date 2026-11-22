@@ -3,6 +3,8 @@
 Reproducible comparisons with external benchmark data belong here. Each case
 records its source, numerical settings, measured errors, and limitations.
 
+- [SPHERIC Test 04 — oscillatory flow over a rippled bed](spheric_test_04/README.md)
+  has a manual entry point with three forcing presets and reusable output slots.
 - [SPHERIC Test 06: moving square](spheric_test_06/README.md): pressure and
   viscous drag at Reynolds numbers 50, 100, and 150, with a manual single-run
   entry point exposing the tank/body layout and simulation settings, plus a
