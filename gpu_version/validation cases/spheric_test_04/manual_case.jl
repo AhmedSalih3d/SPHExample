@@ -1,6 +1,7 @@
 # Run from gpu_version:
 # julia --project=. -t 2,0 "validation cases/spheric_test_04/manual_case.jl"
 using SPHExampleGPU
+using SPHExampleGPU.OpenExternalPrograms: AutoOpenParaview
 using StaticArrays: SVector
 using LinearAlgebra: norm
 
@@ -9,20 +10,20 @@ let
     Dimensions = 2
     FloatType = Float32
     oscillation = 1        # 1, 2, or 3 from the benchmark table
-    dx = 0.005             # Particle spacing in metres
+    dx = 0.0025             # Particle spacing in metres
     duration = 8.46        # One oscillation, in seconds
-    frames = 85            # Output intervals, plus the initial state
+    frames = 850            # Output intervals, plus the initial state
     slot = 1               # Three reusable output slots per oscillation
     overwrite = true       # Replace the solver output in this slot
-    visualize = false      # Open ParaView when the run finishes
-    boundary = SimpleMDBC  # NoMDBC selects DBC
+    visualize = true       # Open ParaView when the run finishes
+    boundary = SimpleMDBC      # NoMDBC selects DBC
     coefh = 2.0
     sound_speed = 10.0     # m/s
     viscosity = 1e-6       # m?/s
 
     oscillation in 1:3 || throw(ArgumentError("Choose oscillation 1, 2, or 3"))
     slot in 1:3 || throw(ArgumentError("Choose run slot 1, 2, or 3"))
-    1 <= frames <= 200 || throw(ArgumentError("Choose 1 to 200 output intervals"))
+    frames > 0 || throw(ArgumentError("Choose at least one output interval"))
     all(x -> isfinite(x) && x > 0, (dx, duration, coefh, sound_speed, viscosity)) ||
         throw(ArgumentError("Spacing, duration, coefh, sound speed and viscosity must be positive and finite"))
     boundary in (NoMDBC, SimpleMDBC) || throw(ArgumentError("Choose NoMDBC or SimpleMDBC"))
@@ -109,6 +110,13 @@ let
     end
     realpath(save) == joinpath(realpath(run_root), basename(save)) || error("Run folder escapes runs/")
     owned = ("RippledBed.vtkhdf", "RippledBed_SingleVTKHDFStateFile.py", "SimulationOutput.log", "settings.txt")
+    owned = (owned..., "circulation.csv", "circulation_reference.csv",
+             "circulation_paraview.pvsm", "circulation_paraview.png")
+    python = Sys.which("python")
+    pvpython = Sys.which("pvpython")
+    isnothing(python) && error("Case 04 requires Python with NumPy, SciPy and h5py on PATH")
+    isnothing(pvpython) && error("Case 04 requires ParaView's pvpython on PATH")
+    run(`$python -c "import h5py, numpy, scipy.spatial, scipy.ndimage"`)
     lock = joinpath(save, ".running")
     mkdir(lock)
     try
@@ -122,19 +130,19 @@ let
         end
         times = collect(range(duration/frames, duration; length=frames))
         SimMetaData = SimulationMetaData{
-            Dimensions, FloatType, NoShifting, NoKernelOutput, boundary, StoreLog,
+            Dimensions, FloatType, PlanarShifting, NoKernelOutput, boundary, StoreLog,
         }(;
             SimulationName = "RippledBed",
             SaveLocation = save,
             SimulationTime = duration,
             OutputTimes = times,
-            OutputVariables = ["Velocity", "Pressure", "Type"],
+            OutputVariables = ["Velocity", "Density", "Pressure", "Type"],
             ExportSingleVTKHDF = true,
             Periodicity = PeriodicBoundary{Dimensions}(1; min = 0, max = length_x),
             GPUDoublePosition = true,
             GPUBoundaryForces = false,
             OpenLogFile = false,
-            VisualizeInParaview = visualize,
+            VisualizeInParaview = false,
         )
         SimViscosity = Laminar()
         SimDensityDiffusion = ZeroGravityLinearDensityDiffusion()
@@ -158,9 +166,30 @@ let
         end
         result.termination_reason === :completed && result.diagnostics.frozen_particles == 0 ||
             error("Run terminated early or froze particles. See $save")
-        open(joinpath(save, "settings.txt"), "w") do io
-            println(io, (; oscillation, slot, boundary, dx, duration, frames, coefh, sound_speed,
-                viscosity, period, amplitude, fluid=length(fluid), walls=length(walls)))
+        speed_max = ceil(1.25 * amplitude; digits = 2)
+        run_summary = join([
+            "RippledBed | SPHERIC Test 04 | osc$(oscillation), slot $(slot)",
+            "Particle resolution: $(1000dx) mm | wavelength/dx = $(round(wavelength/dx; digits=1)) | $(length(fluid)) fluid, $(length(walls)) wall",
+            "Parameters: $(boundary), symplectic, planar shifting, coefh=$(coefh), c0=$(sound_speed) m/s, nu=$(viscosity) m^2/s, CFL=0.2",
+            "Forcing: U=$(amplitude) m/s, T=$(period) s | duration=$(duration) s, output intervals=$(frames)",
+            "Variables: velocity magnitude (0-$(speed_max) m/s), pressure, particle type",
+            "Validation: vorticity and vortex circulation from saved fluid velocity",
+        ], "\n")
+        write(joinpath(save, "settings.txt"), run_summary * "\n")
+        run(`$python $(joinpath(case_dir, "compare_circulation.py")) $save $oscillation $dx`)
+        AutoOpenParaview(SimMetaData, SimConstants, SimMetaData.OutputVariables;
+            color_variable="Velocity", velocity_range=(0.0, speed_max), run_annotation=run_summary)
+        loader = joinpath(save, "RippledBed_SingleVTKHDFStateFile.py")
+        open(loader, "a") do io
+            println(io)
+            write(io, read(joinpath(case_dir, "paraview_circulation.py"), String))
+            println(io, "add_circulation_chart(directory, layout1, renderView1, $oscillation, ", repr(string(boundary)), ")")
+        end
+        run(`$pvpython --force-offscreen-rendering $loader`)
+        if visualize
+            paraview = Sys.which("paraview")
+            isnothing(paraview) && error("Add paraview to PATH to open the saved comparison")
+            run(`$paraview --state=$(joinpath(save, "circulation_paraview.pvsm"))`; wait=false)
         end
         println("Results saved in ", save)
         result
