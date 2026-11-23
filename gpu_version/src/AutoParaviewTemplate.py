@@ -218,6 +218,25 @@ ColorBy(Simulation_vtkhdfDisplay, ('POINTS', '__COLOR_VAR__'))
 # rescale color and/or opacity maps used to include current data range
 Simulation_vtkhdfDisplay.RescaleTransferFunctionToDataRange(True, False)
 
+velocity_range = __VELOCITY_RANGE__
+if velocity_range is not None and 'Velocity' in __OUTPUT_VARIABLES__:
+    ColorBy(Simulation_vtkhdfDisplay, ('POINTS', 'Velocity', 'Magnitude'))
+    speed_lut = GetColorTransferFunction('Velocity')
+    speed_lut.RescaleTransferFunction(*velocity_range)
+    speed_lut.AutomaticRescaleRangeMode = 'Never'
+    GetOpacityTransferFunction('Velocity').RescaleTransferFunction(*velocity_range)
+    speed_bar = GetScalarBar(speed_lut, renderView1)
+    speed_bar.Title = 'Speed [m/s]'
+    speed_bar.ComponentTitle = ''
+
+run_annotation = __RUN_ANNOTATION__
+if run_annotation:
+    run_label = Text(registrationName='Simulation settings')
+    run_label.Text = run_annotation
+    run_label_display = Show(run_label, renderView1)
+    run_label_display.WindowLocation = 'Upper Left Corner'
+    run_label_display.FontSize = 12
+
 # Keep the pressure scale fixed so colors remain comparable across timesteps.
 pressure_range = __PRESSURE_RANGE__
 if 'Pressure' in __OUTPUT_VARIABLES__:

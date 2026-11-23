@@ -124,6 +124,8 @@ function AutoOpenParaview(SimMetaData::SimulationMetaData,
                           representation::String="Point Gaussian",
                           color_variable::Union{String,Nothing}="Density",
                           pressure_range=nothing,
+                          velocity_range=nothing,
+                          run_annotation::String="",
                           show_damping::Bool=false,
                           spring_force_range=nothing)
     ## Generate auto paraview py
@@ -134,6 +136,13 @@ function AutoOpenParaview(SimMetaData::SimulationMetaData,
         all(isfinite, (pmin, pmax)) && pmin < pmax ||
             throw(ArgumentError("pressure_range must be finite and increasing"))
         pressure_range = (pmin, pmax)
+    end
+    if velocity_range !== nothing
+        length(velocity_range) == 2 || throw(ArgumentError("velocity_range must contain two values in m/s"))
+        vmin, vmax = Float64.(velocity_range)
+        all(isfinite, (vmin, vmax)) && 0 <= vmin < vmax ||
+            throw(ArgumentError("velocity_range must be finite, nonnegative and increasing"))
+        velocity_range = (vmin, vmax)
     end
     if spring_force_range !== nothing
         length(spring_force_range) == 2 || throw(ArgumentError("spring_force_range must contain two values in N"))
@@ -166,6 +175,9 @@ function AutoOpenParaview(SimMetaData::SimulationMetaData,
                      "__PRESSURE_RANGE__" => (pressure_range === nothing ? "None" :
                          "[$(pressure_range[1]), $(pressure_range[2])]"),
                      "__SHOW_DAMPING__" => (show_damping ? "True" : "False"),
+                     "__VELOCITY_RANGE__" => (velocity_range === nothing ? "None" :
+                         "[$(velocity_range[1]), $(velocity_range[2])]"),
+                     "__RUN_ANNOTATION__" => repr(run_annotation),
                      "__SPRING_FORCE_RANGE__" => (spring_force_range === nothing ? "None" :
                          "[$(spring_force_range[1]), $(spring_force_range[2])]"),
                      "__VIEW_DIMENSION__" => ViewDimension,
