@@ -411,6 +411,11 @@ function interaction_kernel!(dρdtI, Acceleration, Kernel, KernelGradient, ∇C�
     step_active(step) || return nothing
     grid = load_grid(gridarg)
     t    = thread_index()
+    # The corrector runs after this entire predictor kernel on the same stream.
+    if predictor_output !== nothing && t == Int32(1)
+        signal = get(predictor_output, :reset_signal, nothing)
+        signal === nothing || (@inbounds signal[1] = zero(eltype(signal)))
+    end
     i    = (t - Int32(1)) ÷ Int32(K) + Int32(1)
     lane = (t - Int32(1)) % Int32(K)
     n = step_particle_count(step, n)
@@ -660,7 +665,9 @@ function interaction_kernel!(dρdtI, Acceleration, Kernel, KernelGradient, ∇C�
         if cleaning !== nothing
             divergence_sum = lanes_sum(divergence_sum,Val(K))
         end
-        if viscous_dt !== nothing || pair_signal !== nothing
+        # Only per-particle output needs a subgroup maximum. The global
+        # signal already reduces every lane together at the end of the block.
+        if viscous_dt !== nothing
             pair_rate = lanes_max(pair_rate, Val(K))
         end
         if SimDensityDiffusion isa FourtakasDensityDiffusion
@@ -793,7 +800,8 @@ function launch_interactions!(dρdtI, Acceleration, Kernel, KernelGradient, ∇C
                               always_inline::Bool = true, fastmath::Bool = true, fuse_reference_forces::Bool = fastmath,
                               target_indices = nothing, target_count::Integer = length(Position), pair_order = nothing,
                               native_rigid::Val = Val(false), interaction_mass = nothing, predictor_output = nothing,
-                              cleaning = nothing, pair_signal = nothing, density_budget = nothing)
+                              cleaning = nothing, pair_signal = nothing, density_budget = nothing,
+                              pair_signal_precleared::Bool = false)
     density_budget === nothing || (
         lanes isa Val{1} && radial isa Val{false} && viscous_dt === nothing &&
         SimDensityDiffusion isa Union{ZeroDensityDiffusion, ZeroGravityLinearDensityDiffusion, LinearDensityDiffusion} &&
@@ -850,7 +858,7 @@ function launch_interactions!(dρdtI, Acceleration, Kernel, KernelGradient, ∇C
     end
     use_radial = Val(options.radial)
     use_scalar_sps = Val(options.scalar_sps)
-    reset_pair_signal!(pair_signal,step)
+    pair_signal_precleared || reset_pair_signal!(pair_signal,step)
     @cuda always_inline=always_inline fastmath=fastmath threads=threads blocks=cld(n * K, threads) interaction_kernel!(
         dρdtI, Acceleration, Kernel, KernelGradient, ∇Cᵢ, ∇◌rᵢ,
         Pairs, Position, Density, Velocity, ParticleType, SimParticles,

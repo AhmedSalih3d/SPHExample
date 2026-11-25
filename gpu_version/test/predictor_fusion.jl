@@ -30,7 +30,7 @@ function fixture(D, T; compact, cache, double_position, fused, lanes)
     motion = MotionArrays(geometry, host)
     ctx = (; gpu, sup, cl, red, state, motion, SimKernel = kernel, SimConstants = constants,
         SimDensityDiffusion = LinearDensityDiffusion(), SimViscosity = ArtificialViscosity(),
-        FlagKernel = Val(true), FlagShift = Val(true), UseMDBC = false, SingleNeighbor = false,
+        FlagKernel = Val(true), FlagShift = Val(PlanarShifting), UseMDBC = false, SingleNeighbor = false,
         threads = 128, lanes = Val(lanes), bforces = Val(true), HourGlass = meta.HourGlass,
         boundary_mode = NoMDBC(), cache_final_state = cache, fuse_predictor = fused,
         interaction_fastmath = false)
@@ -73,13 +73,19 @@ end
                     rebuild!(ctx)
                     STEP.invalidate_graphs!(ctx.state)
                     before = snapshot(ctx)
+                    # Stopped preparation must preserve the previous corrector's signal.
+                    fill!(ctx.sup.PairSignal, T(1e6))
                     DRIVER.prepare_step_graph!(ctx)
                     @test snapshot(ctx) == before
+                    @test only(Array(ctx.sup.PairSignal)) == T(1e6)
                 end
                 for _ in 1:3
                     DRIVER.launch_step_graph!(baseline)
                     DRIVER.launch_step_graph!(fused)
                 end
+                signal = only(Array(fused.sup.PairSignal))
+                @test signal < T(1e6)
+                @test signal ≈ only(Array(baseline.sup.PairSignal)) rtol = 100eps(T)
                 a, b = snapshot(fused), snapshot(baseline)
                 for i in eachindex(a)
                     if i in (5, 6)

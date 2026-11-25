@@ -1096,7 +1096,7 @@ function predictor_fusion_enabled(meta::SimulationMetaData{D,T,S,K,B}; motion, f
         rotation === nothing && open_boundary === nothing
 end
 
-function launch_solver_interactions!(ctx,position,density,velocity,pairs,step;include_gravity=Val(false), predictor_output=nothing, cleaning_half::Bool = false, collect_pair_signal::Bool = true, flag_shift=ctx.FlagShift)
+function launch_solver_interactions!(ctx,position,density,velocity,pairs,step;include_gravity=Val(false), predictor_output=nothing, cleaning_half::Bool = false, collect_pair_signal::Bool = true, pair_signal_precleared::Bool = false, flag_shift=ctx.FlagShift)
     (;gpu,cl,sup,SimKernel,SimConstants,SimDensityDiffusion,SimViscosity,FlagKernel,threads,lanes,bforces)=ctx
     floating = get(ctx, :floating, nothing)
     native_rigid = floating !== nothing && hasproperty(floating, :mechanics)
@@ -1141,7 +1141,7 @@ function launch_solver_interactions!(ctx,position,density,velocity,pairs,step;in
         preload_types=get(ctx,:preload_types,Val(false)),
         periodic_cell_coordinates=periodic_coordinates,always_inline=get(ctx,:interaction_always_inline,true),
         fastmath=get(ctx,:interaction_fastmath,true),target_indices=targets,target_count=length(gpu),pair_order=order,
-        native_rigid=Val(native_rigid),interaction_mass,predictor_output,
+        native_rigid=Val(native_rigid),interaction_mass,predictor_output,pair_signal_precleared,
         cleaning=cleaning_fields(get(ctx,:divergence_cleaning,nothing),cleaning_half),pair_signal=collect_pair_signal ? sup.PairSignal : nothing)
     observe_density_stage!(get(ctx, :density_observer, nothing), cleaning_half ? :corrector_rate : :predictor_rate, ctx, step)
     return nothing
@@ -1343,7 +1343,7 @@ function enqueue_step!(ctx, timed::Bool; finish_current::Bool = true, finish_nex
         # Only the corrector's pair signal is consumed by the next timestep.
         enqueue_state_derivative!(ctx, state, timed, "04a First NeighborLoopMDBC", "04 First NeighborLoop";
             prepare_motion = fused_motion && motion.active, prepared_forces = true, collect_pair_signal = false,
-            predictor_output = fuse_predictor ? predictor_outputs(ctx) : nothing)
+            predictor_output = fuse_predictor ? merge(predictor_outputs(ctx), (; reset_signal = sup.PairSignal)) : nothing)
     end
 
     if floats
@@ -1402,7 +1402,7 @@ function enqueue_step!(ctx, timed::Bool; finish_current::Bool = true, finish_nex
     # Corrector: every term, including the viscosity and density diffusion
     # models, is evaluated at the predictor state.
     @phase HourGlass "08 Second NeighborLoop" timed launch_solver_interactions!(
-        ctx,position_half,sup.ρₙ⁺,velocity_half,sup.PosCellsₙ⁺,state; cleaning_half=true)
+        ctx,position_half,sup.ρₙ⁺,velocity_half,sup.PosCellsₙ⁺,state; cleaning_half=true, pair_signal_precleared=fuse_predictor)
 
     @phase HourGlass "09 External Forces" timed launch_external_forces!(get(ctx, :external_forces, ()),
         gpu.Acceleration, position_half, velocity_half, gpu.Type, gpu.GroupMarker, state, SimConstants.g;
