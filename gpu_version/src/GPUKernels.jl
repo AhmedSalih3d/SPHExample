@@ -68,6 +68,8 @@ using ..GPUReductions
 using ..GPUStepState
 using ..DampingZones: damped_velocity
 using ..GPUPairwiseTimesteps: reset_pair_signal!,store_pair_signal!,acoustic_denominator
+using ..GPUPairwiseTimesteps: PairSignalPartials, pair_signal_accumulator, reduced_pair_signal
+using ..GPUPairwiseTimesteps: integration_pair_maximum, compact_pair_signal!
 using ..GPUDivergenceCleaning: cleaning_psi, cleaning_derivative!, cleaning_predict!, cleaning_commit!,
     signal_value, store_signal!, cleaning_timestep, initialize_signal!
 using ..SimulationMetaDataConfiguration: NoMDBC, SimpleMDBC, UpdatedMDBC, DBCPlus, ClonedPressureBoundary, DualSPHysicsSymplectic, is_planar_shifting, shifting_fraction
@@ -858,6 +860,10 @@ function launch_interactions!(dρdtI, Acceleration, Kernel, KernelGradient, ∇C
     end
     use_radial = Val(options.radial)
     use_scalar_sps = Val(options.scalar_sps)
+    if pair_signal isa PairSignalPartials
+        length(pair_signal.values) == cld(n * K, threads) ||
+            throw(ArgumentError("Pair signal partials require one slot per interaction block"))
+    end
     pair_signal_precleared || reset_pair_signal!(pair_signal,step)
     @cuda always_inline=always_inline fastmath=fastmath threads=threads blocks=cld(n * K, threads) interaction_kernel!(
         dρdtI, Acceleration, Kernel, KernelGradient, ∇Cᵢ, ∇◌rᵢ,
@@ -1284,6 +1290,20 @@ end
 
 @inline step_reduce(a::SVector{3, T}, b::SVector{3, T}) where {T} =
     SVector{3, T}(max(a[1], b[1]), min(a[2], b[2]), max(a[3], b[3]))
+@inline step_reduce(a::SVector{4, T}, b::SVector{4, T}) where {T} =
+    SVector{4, T}(max(a[1], b[1]), min(a[2], b[2]), max(a[3], b[3]), max(a[4], b[4]))
+
+@inline store_step_statistics!(partial, acc, signal) = block_reduce_store!(partial, acc, step_reduce)
+@inline function store_step_statistics!(partial, acc, signal::PairSignalPartials)
+    r = block_reduce(SVector(acc[1], acc[2], acc[3], integration_pair_maximum(signal)), step_reduce)
+    if threadIdx().x == Int32(1)
+        @inbounds begin
+            partial[blockIdx().x] = SVector(r[1], r[2], r[3])
+            signal.reduced[blockIdx().x] = r[4]
+        end
+    end
+    return nothing
+end
 
 function final_step_kernel!(Position, Velocity, Acceleration, Density, dρdtI, ρₙ⁺, Positionₙ⁺,
                             Velocityₙ⁺, ParticleType, ∇Cᵢ, ∇◌rᵢ, step, SimKernel, SimConstants,
@@ -1378,7 +1398,7 @@ function final_step_kernel!(Position, Velocity, Acceleration, Density, dρdtI, �
         i += stride
     end
 
-    block_reduce_store!(partial, acc_red, step_reduce)
+    store_step_statistics!(partial, acc_red, pair_signal)
     store_signal!(cleaning,cleaning_speed)
     diagnostic_store!(diagnostic_partial, acc_diagnostic)
     # A single block has completed every particle write at the reduction barrier.
@@ -1450,6 +1470,7 @@ function launch_step_reduction!(red::ReductionWorkspace{SVector{3, T}}, Position
     init = SVector{3, T}(zero(T), T(Inf), zero(T))
     launch_reduce!(red, step_map, step_reduce, init, length(Position), Position, Velocity, Acceleration,
                    Positionₙ⁺, T(SimKernel.h), T(SimKernel.η²),pair_signal)
+    compact_pair_signal!(pair_signal)
     initialize_signal!(cleaning_state,density,types,constants)
     if diagnostics !== nothing
         launch_timestep_diagnostic_reduction!(diagnostics, Position, Velocity, Acceleration, Positionₙ⁺, particle_ids, SimKernel)
@@ -1501,7 +1522,7 @@ function finish_kernel!(step::DeviceStep{T}, partial, nblocks::Int32, CFL::T, c�
         acc = step_reduce(acc, partial[b])
         b += blockDim().x
     end
-    r = block_reduce(acc, step_reduce)
+    r = block_reduce(pair_signal_accumulator(pair_signal, acc, threadIdx().x, blockDim().x), step_reduce)
     limit = finish_diagnostic(diagnostic_partial, nblocks)
     cleaning_limit = cleaning_timestep(cleaning,nblocks,h,c₀)
 
@@ -1509,14 +1530,15 @@ function finish_kernel!(step::DeviceStep{T}, partial, nblocks::Int32, CFL::T, c�
         @inbounds begin
             visc = r[1]
             dt1  = r[2]
-            dt   = min(Float64(GPUStepState.controlled_timestep(timestep_controller, CFL * min(dt1, h / acoustic_denominator(pair_signal,visc,c₀,h)))),dt_limit,cleaning_limit)
+            acoustic = h / acoustic_denominator(reduced_pair_signal(pair_signal,r),visc,c₀,h)
+            dt   = min(Float64(GPUStepState.controlled_timestep(timestep_controller, CFL * min(dt1, acoustic))),dt_limit,cleaning_limit)
             if s[I_CLIP_OUTPUT] != 0
                 dt = min(dt, f[F_TCLIP] - f[F_TIME])
             end
             d4   = 4 * r[3]
             dx   = T(f[F_DX]) + d4
             f[F_DT]   = dt
-            record_diagnostic!(diagnostic_result, limit, step, dt, CFL * dt1, CFL * (h / acoustic_denominator(pair_signal,visc,c₀,h)), dt1 <= h / acoustic_denominator(pair_signal,visc,c₀,h))
+            record_diagnostic!(diagnostic_result, limit, step, dt, CFL * dt1, CFL * acoustic, dt1 <= acoustic)
             f[F_DISP] = d4
             f[F_DX]   = dx
             s[I_PHASE] = PHASE_DT_READY

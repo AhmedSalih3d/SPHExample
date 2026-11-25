@@ -31,6 +31,11 @@ Existing output, cleaning and rigid-body timestep policies remain in place. This
 explicit estimate, not a current-stage rejection/retry scheme or a guarantee
 that WCSPH pressure/force noise disappears.
 
+In ordinary GPU simulations, each interaction block writes its local pairwise
+maximum. Final integration reduces those maxima alongside the other step
+statistics, and the timestep kernel combines the block results using the same
+timestep formula.
+
 Set `GPULegacyTimestep = true` in `SimulationMetaData` to reproduce the previous
 ordinary criterion. Historical SPHERIC comparison scripts explicitly select it.
 The optional `GPUTimestepDiagnosticsEvery` provenance recorder currently requires

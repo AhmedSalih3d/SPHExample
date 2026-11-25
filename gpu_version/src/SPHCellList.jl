@@ -46,6 +46,7 @@ using ..PrescribedMotions: PrescribedMotion, MotionSystem, combine_motions,
 using ..MotionStageSampling: MotionStageSampler
 using ..GPUCellGrid
 using ..GPUKernels
+using ..GPUPairwiseTimesteps: PairSignalPartials, predictor_reset_signal
 using ..GPUConfiguration: effective_configuration, configuration_snapshot, log_effective_configuration
 using ..GPUFloating
 using ..OpenBoundaries
@@ -1087,6 +1088,12 @@ function predictor_outputs(ctx)
         reuse_predictors = Val(sup.ReusePredictors))
 end
 
+simulation_pair_signal(::Nothing, particle_count, configuration, integration_blocks) = nothing
+function simulation_pair_signal(signal, particle_count, configuration, integration_blocks)
+    blocks = cld(particle_count * configuration.lanes_per_particle, configuration.interaction_threads)
+    return PairSignalPartials(CUDA.zeros(eltype(signal), blocks), CUDA.zeros(eltype(signal), integration_blocks))
+end
+
 function predictor_fusion_enabled(meta::SimulationMetaData{D,T,S,K,B}; motion, floating,
                                   external_forces, rotation, open_boundary) where {D,T,S,K,B}
     return meta.GPUFusePredictor && meta.GPUInteractionFastMath && B === NoMDBC &&
@@ -1142,7 +1149,7 @@ function launch_solver_interactions!(ctx,position,density,velocity,pairs,step;in
         periodic_cell_coordinates=periodic_coordinates,always_inline=get(ctx,:interaction_always_inline,true),
         fastmath=get(ctx,:interaction_fastmath,true),target_indices=targets,target_count=length(gpu),pair_order=order,
         native_rigid=Val(native_rigid),interaction_mass,predictor_output,pair_signal_precleared,
-        cleaning=cleaning_fields(get(ctx,:divergence_cleaning,nothing),cleaning_half),pair_signal=collect_pair_signal ? sup.PairSignal : nothing)
+        cleaning=cleaning_fields(get(ctx,:divergence_cleaning,nothing),cleaning_half),pair_signal=collect_pair_signal ? get(ctx,:pair_signal,sup.PairSignal) : nothing)
     observe_density_stage!(get(ctx, :density_observer, nothing), cleaning_half ? :corrector_rate : :predictor_rate, ctx, step)
     return nothing
 end
@@ -1303,6 +1310,7 @@ function enqueue_step!(ctx, timed::Bool; finish_current::Bool = true, finish_nex
     floats    = floating !== nothing && floating.active
     position_half, velocity_half = predictor_arrays(sup, gpu)
     fuse_predictor = get(ctx, :fuse_predictor, false)
+    pair_signal = get(ctx, :pair_signal, sup.PairSignal)
 
     # dt of this step from the reduction of the previous one; also decides
     # whether the step may run at all (cell list rebuild, output time).
@@ -1312,7 +1320,7 @@ function enqueue_step!(ctx, timed::Bool; finish_current::Bool = true, finish_nex
         @phase HourGlass "01 Update TimeStep" timed launch_finish!(state, red, SimKernel, SimConstants;
             diagnostics = get(ctx, :diagnostics, nothing), stage_sampler = sampler,
             dt_limit=floats ? floating.spring_dt : Inf,
-            cleaning=cleaning_fields(get(ctx,:divergence_cleaning,nothing)),pair_signal=sup.PairSignal,
+            cleaning=cleaning_fields(get(ctx,:divergence_cleaning,nothing)),pair_signal,
             timestep_controller = floats ? rigid_timestep_controller(floating, SimConstants) : nothing)
     end
 
@@ -1343,7 +1351,7 @@ function enqueue_step!(ctx, timed::Bool; finish_current::Bool = true, finish_nex
         # Only the corrector's pair signal is consumed by the next timestep.
         enqueue_state_derivative!(ctx, state, timed, "04a First NeighborLoopMDBC", "04 First NeighborLoop";
             prepare_motion = fused_motion && motion.active, prepared_forces = true, collect_pair_signal = false,
-            predictor_output = fuse_predictor ? merge(predictor_outputs(ctx), (; reset_signal = sup.PairSignal)) : nothing)
+            predictor_output = fuse_predictor ? merge(predictor_outputs(ctx), (; reset_signal = predictor_reset_signal(pair_signal))) : nothing)
     end
 
     if floats
@@ -1436,7 +1444,7 @@ function enqueue_step!(ctx, timed::Bool; finish_current::Bool = true, finish_nex
         next_inverse_density = get(ctx, :cache_final_state, false) ? sup.InvDensity : nothing,
         next_pressure = get(ctx, :cache_final_state, false) ? sup.Pressure : nothing,
         diagnostics = get(ctx, :diagnostics, nothing), particle_ids = gpu.ID,
-        damping = get(ctx, :damping, ()),cleaning = cleaning_fields(get(ctx,:divergence_cleaning,nothing)),pair_signal=sup.PairSignal)
+        damping = get(ctx, :damping, ()),cleaning = cleaning_fields(get(ctx,:divergence_cleaning,nothing)),pair_signal)
     observe_density_stage!(get(ctx, :density_observer, nothing), :corrector_stored, ctx, state)
 
     # Rigid final placement reads neither time nor phase, so a one-block
@@ -1457,7 +1465,7 @@ function enqueue_step!(ctx, timed::Bool; finish_current::Bool = true, finish_nex
             launch_finish!(state, red, SimKernel, SimConstants;
                 diagnostics = get(ctx, :diagnostics, nothing), stage_sampler = sampler,
                 dt_limit = floats ? floating.spring_dt : Inf,
-                cleaning = cleaning_fields(get(ctx,:divergence_cleaning,nothing)),pair_signal=sup.PairSignal,
+                cleaning = cleaning_fields(get(ctx,:divergence_cleaning,nothing)),pair_signal,
                 timestep_controller = floats ? rigid_timestep_controller(floating, SimConstants) : nothing,
                 commit_previous = true)
         else
@@ -1632,7 +1640,7 @@ function SimulationLoop(SimDensityDiffusion::SDD, SimViscosity::SV, SimKernel,
                         motion, state::StepState{FloatType};
                         floating = nothing, external_forces = (), damping = (), rotation = nothing, open_boundary = nothing,logger = nothing, diagnostics = nothing,
                         divergence_cleaning = nothing, density_observer = nothing, output_clip_times = nothing,
-                        sample_deadline = Inf, clip_to_sample = false) where {Dimensions, FloatType, SMode, KMode, BMode, LMode,
+                        sample_deadline = Inf, clip_to_sample = false, pair_signal = sup.PairSignal) where {Dimensions, FloatType, SMode, KMode, BMode, LMode,
                                                    SDD <: SPHDensityDiffusion, SV <: SPHViscosity}
     validate_shifting(SMode, SimMetaData.TimeSteppingMode, SimMetaData.VariableResolution)
     if divergence_cleaning !== nothing
@@ -1732,7 +1740,7 @@ function SimulationLoop(SimDensityDiffusion::SDD, SimViscosity::SV, SimKernel,
              frozen_particles = Val(open_boundary !== nothing || cl.frozen_total > 0), cache_final_state, fuse_predictor, diagnostics,
              periodic_cell_coordinates = SimMetaData.GPUPeriodicCellCoordinates,
              logger = LMode === StoreLog ? logger : nothing,
-             density_observer)
+             density_observer, pair_signal)
 
     frame_time = next_output_time(SimMetaData)
     t_out = min(frame_time, sample_deadline)
@@ -1762,7 +1770,7 @@ function SimulationLoop(SimDensityDiffusion::SDD, SimViscosity::SV, SimKernel,
         # bound already forces a cell list rebuild before the first step.
         position_half = sup.ReusePredictors ? gpu.Position : sup.Positionₙ⁺
         launch_step_reduction!(red, gpu.Position, gpu.Velocity, gpu.Acceleration, position_half, SimKernel;
-            diagnostics, particle_ids = gpu.ID,cleaning_state=divergence_cleaning,density=gpu.Density,types=gpu.Type,constants=SimConstants,pair_signal=sup.PairSignal)
+            diagnostics, particle_ids = gpu.ID,cleaning_state=divergence_cleaning,density=gpu.Density,types=gpu.Type,constants=SimConstants,pair_signal)
         state.primed = true
     end
 
@@ -1850,7 +1858,7 @@ function SimulationLoop(SimDensityDiffusion::SDD, SimViscosity::SV, SimKernel,
                     # used by the timestep criterion. Initial external forces must
                     # also limit the first step. Reduce the accepted state.
                     launch_step_reduction!(red, gpu.Position, gpu.Velocity, gpu.Acceleration, gpu.Position, SimKernel;
-                        diagnostics, particle_ids = gpu.ID,cleaning_state=divergence_cleaning,density=gpu.Density,types=gpu.Type,constants=SimConstants,pair_signal=sup.PairSignal)
+                        diagnostics, particle_ids = gpu.ID,cleaning_state=divergence_cleaning,density=gpu.Density,types=gpu.Type,constants=SimConstants,pair_signal)
                     GPUStepState.set_slot!(state.i, state.ih, I_PHASE, PHASE_NEED_DT)
                     initialize_external_forces = false
                 end
@@ -2277,8 +2285,9 @@ function RunSimulation(;SimGeometry::Vector{SPHGeometry{Dimensions, FloatType}},
         CUDA.synchronize()
     end
 
+    pair_signal = simulation_pair_signal(sup.PairSignal, NumberOfPoints, state.configuration.effective, red.nblocks)
     gpu_buffers = (; particles = gpu, support = sup, cells = cl,
-        auxiliary = (motion, rotation, external_forces, floating, open_boundary,divergence_cleaning,red.partial, state.f, state.i, diagnostics))
+        auxiliary = (motion, rotation, external_forces, floating, open_boundary,divergence_cleaning,red.partial, state.f, state.i, diagnostics, pair_signal))
 
     initial_floating = floating.active ? floating_state(floating) : nothing
     floating_markers = [geom.GroupMarker for geom in SimGeometry if geom.Type == Floating]
@@ -2593,7 +2602,7 @@ function RunSimulation(;SimGeometry::Vector{SPHGeometry{Dimensions, FloatType}},
                                                                  SimConstants, gpu, cl, sup, red, motion, state;
                                                                  floating = floating, external_forces, damping, divergence_cleaning, rotation, open_boundary,logger = SimLogger, diagnostics,
                                                                  density_observer = SimDensityObserver, output_clip_times = SimOutputClipTimes,
-                                                                 sample_deadline, clip_to_sample = sample_floating)
+                                                                 sample_deadline, clip_to_sample = sample_floating, pair_signal)
             accepted_time = SimMetaData.TotalTime
             if sample_index <= length(sample_times) && accepted_time >= sample_deadline
                 if sample_floating

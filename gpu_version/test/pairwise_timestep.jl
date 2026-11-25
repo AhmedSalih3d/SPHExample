@@ -36,6 +36,20 @@ if CUDA.functional()
             @test only(Array(signal)) == 0
         end
     end
+    @testset "one maximum per interaction block" begin
+        for T in (Float32, Float64), threads in (32, 48, 128, 256)
+            values = T.(1:1003)
+            blocks = cld(length(values), threads)
+            partials = CUDA.fill(T(Inf), blocks)
+            wrapped = PAIR.PairSignalPartials(partials, CUDA.zeros(T, 1))
+            @cuda threads=threads blocks=blocks signal_probe!(wrapped, CuArray(values))
+            expected = [maximum(@view values[first:min(first + threads - 1, length(values))])
+                        for first in 1:threads:length(values)]
+            @test Array(partials) == expected
+            PAIR.compact_pair_signal!(wrapped)
+            @test only(Array(wrapped.reduced)) == maximum(values)
+        end
+    end
     @testset "neighbor oracle and unchanged force operators" begin
         for T in (Float32,Float64), D in (2,3), lanes in (1,4)
             V = SVector{D,T}
