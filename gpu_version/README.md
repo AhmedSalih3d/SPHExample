@@ -3101,6 +3101,31 @@ the standard *gather* formulation:
   `B - 1` launches and retains complete first/last steps, the same stop decisions,
   and the same arithmetic. Direct launches retain separate commit and selection.
   See the [paired benchmark and validation](benchmark/batch_commit.md).
+* **Batches queued behind readbacks.** With `GPUAsyncOutput = true`, the host
+  queues the next batch of steps before it waits for the current batch's
+  readback, so the device keeps working while the host reads the step state,
+  logs progress and hands frames to the writer. Readbacks alternate between
+  two pinned mirrors. When a batch is expected to reach its output deadline,
+  the frame download, a one-thread kernel that installs the next deadline
+  (the device-side equivalent of `set_output_time!`) and the first batch of
+  the next interval follow it in stream order. The deadline advance acts only
+  after the batch reached its deadline; otherwise queued steps continue the
+  current interval, and stop flags turn them into no-ops after a rebuild
+  request. Queued batches end at the projected rebuild, like host-sized
+  batches, and no batch is queued behind one that is expected to need a
+  rebuild. Every step, timestep and stop decision is unchanged, so particle
+  states and frames are bit-identical to the synchronous loop. Sampled or
+  clipped output schedules, timestep diagnostics, stage observers,
+  `GPUSyncTimers`, `DualSPHysicsSymplectic`, open boundaries, floating bodies,
+  periodic domains and fixed grids keep the synchronous loop. The log reports
+  how many frames were queued behind their batch and how many queued
+  downloads were discarded. On the RTX A1000 (Float32 with Float64 positions,
+  warmed, alternating runs), `StillWedgeMDBC.jl` (3,027 particles, 8,502
+  steps, 401 frames) took 0.450 s instead of 0.590 s (median of five) with
+  all frames bit-identical; before, the GPU idled for a median 0.38 ms at each
+  of its 403 readbacks. A 3 s lid-driven cavity run, dominated by 322 host
+  rebuilds, took 1.56 s instead of 1.59 s (median of six), also with
+  bit-identical frames.
 * **mDBC on the GPU.** One thread (or `K` lanes) per boundary particle with
   a ghost node gathers the fluid neighbours of the node, assembles the
   `(D+1)×(D+1)` system in registers and solves it with StaticArrays inside
@@ -3463,7 +3488,7 @@ weighting with its own free-surface scaling and accepts the bare
 | `GPUScalarSPSViscosity` | `false` | **Experimental**, separately selectable rank-one SPS stress contraction with `LaminarSPS` in 2D/3D Float32/Float64. Preserves the closure and CPU pair ordering, but changes rounding. Does not require `GPURadialInteractions`. Other viscosities warn and use their existing path. |
 | `GPUPreloadInteractionTypes` | `true` | Reuse the loaded fluid predicate for reference `LinearDensityDiffusion`. Retains the diffusion formula and pair orientation, but compiler fusion/rounding can change. Set `false` for the previous type-loading path. Other diffusion models, effective radial interactions and variable resolution explicitly fall back without preloading. |
 | `GPUBoundaryForces` | `true` | Evaluate the momentum equation for boundary particles too, as the CPU does (their acceleration only enters the force based time step limit). `false` skips it and saves 10-20 % in cases with many boundary particles, at the price of a slightly different adaptive time step. |
-| `GPUAsyncOutput` | `true` | Write output files on a task while the GPU continues (see "Asynchronous output"). |
+| `GPUAsyncOutput` | `true` | Write output files on a task while the GPU continues (see "Asynchronous output"), and queue each next step batch before waiting for a readback where supported (see "Batches queued behind readbacks"). `false` keeps the synchronous loop. |
 | `GPUMaxStepsPerSync` | `32` | Upper bound on the steps enqueued between two host read backs of the device resident step state. The actual batch is the estimated number of steps until the next cell list rebuild or output. `1` reproduces a synchronization per step. |
 | `GPUUseGraph` | `true` | Cache CUDA graphs of 1, 2, 4, 8, 16, and 32 steps and compose each host batch from them. Disabled automatically with `GPUSyncTimers`. |
 | `GPULegacyTimestep` | `false` | Opt back into the old ordinary timestep expression based on absolute position. The default uses the neighbor pair signal and maximum speed; it preserves the selected integrator and interaction operators. Does not change the separate `DualSPHysicsSymplectic` scheme. |
@@ -4519,6 +4544,19 @@ precisions. Run the focused output checks with:
 ```bash
 julia -t 4,0 --project=gpu_version -L gpu_version/test/output_queue.jl gpu_version/test/floating_output.jl
 julia -t 2,0 --project=gpu_version gpu_version/test/floating_forces.jl
+```
+
+`test/step_state.jl` checks that a queued step-state readback captures the
+state before later device work, and that the device-side deadline advance
+equals `set_output_time!` after an output stop or unflagged crossing while
+leaving unreached deadlines and rebuild requests unchanged.
+`test/gpu_execution.jl` compares batches queued behind readbacks with the
+synchronous loop (`GPUAsyncOutput = false`) for short and long batches, both
+schemes and three cases. It requires identical steps, final particle fields
+and saved frames, and checks that frames were actually queued:
+
+```bash
+julia --project=gpu_version -L gpu_version/test/step_state.jl gpu_version/test/gpu_execution.jl
 ```
 
 `test/cell_subdivision_benchmark.jl` checks candidate accounting against the

@@ -6,7 +6,7 @@ using HDF5
 
 include(joinpath(@__DIR__, "..", "benchmark", "cases.jl"))
 
-function simulate(case; graph, batch, double_position, scheme)
+function simulate(case; graph, batch, double_position, scheme, async_output = true)
     return mktempdir() do save
         kwargs = case.build(Float32, save)
         meta = kwargs.SimMetaData
@@ -16,6 +16,7 @@ function simulate(case; graph, batch, double_position, scheme)
         meta.GPUMaxStepsPerSync = batch
         meta.GPUDoublePosition = double_position
         meta.GPUOutputQueueBytes = 1024^2
+        meta.GPUAsyncOutput = async_output
         particles = AllocateDataStructures(kwargs.SimGeometry, meta)
         logger = SimulationLogger(save)
         try
@@ -32,9 +33,12 @@ function simulate(case; graph, batch, double_position, scheme)
             (; points = read(root["Points"]), times = read(root["Steps/Values"]),
                density = read(root["PointData/Density"]))
         end
+        log_path = joinpath(save, "SimulationOutput.log")
+        queued = isfile(log_path) ? match(r"Pipelined batches: (\d+)", read(log_path, String)) : nothing
         return (; steps = meta.Iteration, time = meta.TotalTime,
                 position = particles.Position[order], density = particles.Density[order],
-                velocity = particles.Velocity[order], output)
+                velocity = particles.Velocity[order], output,
+                queued_frames = queued === nothing ? 0 : parse(Int, queued[1]))
     end
 end
 
@@ -50,6 +54,20 @@ end
         @test result.density == reference.density
         @test result.velocity == reference.velocity
         @test result.output == reference.output
+    end
+end
+
+@testset "batches queued behind readbacks preserve integration and saved frames" begin
+    # Synchronous output keeps the unqueued driver loop. Short batches continue
+    # an interval behind each readback; long ones queue the next interval.
+    for index in (1, 3, 4), batch in (4, 128),
+        scheme in (SymplecticTimeStepping(), SingleNeighborTimeStepping())
+        case = BENCH_CASES[index]
+        reference = simulate(case; graph = true, batch, double_position = true, scheme, async_output = false)
+        result = simulate(case; graph = true, batch, double_position = true, scheme)
+        @test reference.queued_frames == 0
+        @test result.queued_frames > 0
+        @test Base.structdiff(result, (; queued_frames = 0)) == Base.structdiff(reference, (; queued_frames = 0))
     end
 end
 

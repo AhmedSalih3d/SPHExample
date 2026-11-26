@@ -26,7 +26,8 @@ export StepState, DeviceStep, HostStep, step_active, step_dt, step_time, step_pa
        F_DT, F_TIME, F_DX, F_TOUT, F_DISP, F_TCLIP, I_STOP, I_PHASE, I_ITER, I_CLIP_OUTPUT,
        I_GRID_STATUS, I_GRID_ORIGIN, I_GRID_DIMS, I_GRID_NCELLS, I_GRID_FROZEN,
        STOP_NONE, STOP_REBUILD, STOP_OUTPUT, STOP_PERIODIC_IMAGES, PHASE_NEED_DT, PHASE_DT_READY,
-       readback!, set_output_time!, resume_after_rebuild!, invalidate_graphs!
+       readback!, set_output_time!, resume_after_rebuild!, invalidate_graphs!,
+       enqueue_readback!, complete_readback!, launch_advance_output!
 
 # Slots of the floating point state vector
 const F_DT   = 1   # time step of the current step
@@ -182,6 +183,73 @@ function readback!(s::StepState)
     end
     s.readbacks += 1
     return s
+end
+
+"""
+    enqueue_readback!(state, fh, ih, event)
+
+Queue the device-state downloads into the pinned mirrors `fh` and `ih` and
+record `event` behind them, without waiting. Later work may be queued before
+`complete_readback!` consumes the mirrors. The mirrors must stay alive and
+unread until then.
+"""
+function enqueue_readback!(s::StepState, fh::Vector{Float64}, ih::Vector{Int32}, event::CuEvent)
+    checkbounds(fh, eachindex(s.f))
+    checkbounds(ih, eachindex(s.i))
+    CUDA.context!(CUDA.context(s.f)) do
+        stream = CUDA.stream()
+        GC.@preserve s fh ih begin
+            unsafe_copyto!(pointer(fh), pointer(s.f), length(s.f); stream, async = true)
+            unsafe_copyto!(pointer(ih), pointer(s.i), length(s.i); stream, async = true)
+        end
+        CUDA.record(event, stream)
+    end
+    return nothing
+end
+
+"""
+    complete_readback!(state, fh, ih, event) -> state
+
+Wait for a readback queued by `enqueue_readback!` and publish it in the
+state's own host mirror, like `readback!`.
+"""
+function complete_readback!(s::StepState, fh::Vector{Float64}, ih::Vector{Int32}, event::CuEvent)
+    CUDA.synchronize(event)
+    fh === s.fh || copyto!(s.fh, 1, fh, 1, length(s.fh))
+    ih === s.ih || copyto!(s.ih, 1, ih, 1, length(s.ih))
+    s.readbacks += 1
+    return s
+end
+
+# Device-side `set_output_time!(state, deadline)` for a batch queued before
+# the host has seen whether the preceding batch reached its deadline. It acts
+# only after an output stop, or an unflagged crossing of the deadline that
+# the host would also treat as one, and never clears a rebuild request.
+function advance_output_kernel!(f, i, deadline::Float64)
+    @inbounds begin
+        stop = i[I_STOP]
+        reached = stop == STOP_OUTPUT ||
+            (stop == STOP_NONE && output_time_reached(f[F_TIME], f[F_TOUT], i[I_CLIP_OUTPUT] != 0))
+        if reached
+            f[F_TOUT] = deadline
+            f[F_TCLIP] = deadline
+            i[I_STOP] = STOP_NONE
+        end
+    end
+    return nothing
+end
+
+"""
+    launch_advance_output!(state, deadline)
+
+Queue the device-side transition to the output interval ending at `deadline`.
+Steps queued afterwards continue into that interval only if the preceding
+steps reached the current deadline; otherwise the kernel leaves the state
+unchanged. Clipped output schedules are not supported.
+"""
+function launch_advance_output!(s::StepState, deadline::Real)
+    @cuda threads=1 blocks=1 advance_output_kernel!(s.f, s.i, Float64(deadline))
+    return nothing
 end
 
 # Write one slot of a device vector; the staging array outlives the copy.

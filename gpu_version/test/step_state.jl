@@ -170,6 +170,40 @@ if CUDA.functional()
         end
     end
 
+    @testset "queued readback and device-side deadline advance" begin
+        for T in (Float32, Float64)
+            fh = zeros(Float64, STEP.NUM_F)
+            ih = zeros(Int32, STEP.NUM_I)
+            CUDA.pin(fh)
+            CUDA.pin(ih)
+            event = CuEvent()
+            function prepared(time, stop)
+                state = StepState{T}(dt = T(0.01))
+                set_output_time!(state, 0.5)
+                STEP.set_slot!(state.f, state.fh, STEP.F_TIME, time)
+                STEP.set_slot!(state.i, state.ih, STEP.I_STOP, stop)
+                return state
+            end
+            for (time, stop, advances) in ((0.51, STOP_OUTPUT, true), (0.51, STOP_NONE, true),
+                                           (0.5, STOP_NONE, false), (0.51, STOP_REBUILD, false))
+                state = prepared(time, stop)
+                enqueue_readback!(state, fh, ih, event)
+                launch_advance_output!(state, 0.75)
+                @test complete_readback!(state, fh, ih, event) === state
+                # The mirror holds the state queued before the advance.
+                @test state.fh[STEP.F_TOUT] == 0.5
+                @test state.ih[STEP.I_STOP] == stop
+                @test state.readbacks == 1
+                readback!(state)
+                expected = prepared(time, stop)
+                advances && set_output_time!(expected, 0.75)
+                readback!(expected)
+                @test state.fh == expected.fh
+                @test state.ih == expected.ih
+            end
+        end
+    end
+
     @testset "readback preserves timestep and stop transitions" begin
         for T in (Float32, Float64), graph in (false, true)
             constants = SimulationConstants{T}(dx = 0.02, c₀ = 42, CFL = 0.5)

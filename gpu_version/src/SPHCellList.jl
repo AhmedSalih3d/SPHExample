@@ -1020,17 +1020,19 @@ function UpdateMetaData!(SimMetaData, dt)
     return nothing
 end
 
-@inline next_output_time(SimMetaData) = next_output_time(SimMetaData.OutputTimes, SimMetaData)
+@inline next_output_time(SimMetaData) = output_deadline(SimMetaData, SimMetaData.OutputIterationCounter)
+# Deadline of the interval that ends with output frame `counter`.
+@inline output_deadline(SimMetaData, counter::Integer) = next_output_time(SimMetaData.OutputTimes, SimMetaData, counter)
 # Deadline for the current output interval. The GPU frame counter is one
 # based because it indexes the writer's file handle vector directly, so
 # `interval * counter` here is the CPU's `interval * (counter + 1)` with its
 # zero based counter. The deadline is clamped to the simulation end so the
 # last interval never overshoots `SimulationTime` by up to one interval.
-@inline function next_output_time(interval::Real, SimMetaData)
-    return min(interval * SimMetaData.OutputIterationCounter, SimMetaData.SimulationTime)
+@inline function next_output_time(interval::Real, SimMetaData, counter::Integer = SimMetaData.OutputIterationCounter)
+    return min(interval * counter, SimMetaData.SimulationTime)
 end
-@inline function next_output_time(times::AbstractVector, SimMetaData)
-    idx = SimMetaData.OutputIterationCounter
+@inline function next_output_time(times::AbstractVector, SimMetaData, counter::Integer = SimMetaData.OutputIterationCounter)
+    idx = counter
     if idx <= length(times)
         return min(times[idx], SimMetaData.SimulationTime)
     else
@@ -1595,6 +1597,113 @@ function batch_size(state::StepState{T}, h, t_out, kmax::Int) where {T}
     return clamp(floor(Int, est) + 1, 1, kmax)
 end
 
+"""
+    OutputPipeline(state, acquire, enqueue, release)
+
+Host bookkeeping for queuing the next batch of steps before waiting for the
+current one, so the device keeps working while the host reads the step state,
+logs progress, and hands output frames to the writer.
+
+Batches read back into two alternating pinned mirrors. A batch expected to
+reach its output deadline is followed by the frame download (`enqueue` into a
+buffer from `acquire`), a device-side deadline advance, and the first batch of
+the next interval. Otherwise, the queued batch continues the current
+interval. Stop flags turn queued steps into no-ops after a rebuild request or
+an output that was not anticipated. The host then discards that work and
+proceeds as without the pipeline. `release` returns an unused frame buffer.
+"""
+mutable struct OutputPipeline
+    fh::NTuple{2, Vector{Float64}}
+    ih::NTuple{2, Vector{Int32}}
+    events::NTuple{2, CuEvent}
+    slot::Int             # mirror for the next queued readback
+    queued::Int           # mirror of a queued batch not yet waited for; 0 if none
+    queued_next::Bool     # that batch follows a deadline advance
+    queued_steps::Int
+    advanced::Float64     # deadline installed by the latest device-side advance
+    deadline::Float64     # deadline of the interval after the current one; NaN if none
+    download::Any         # frame download queued behind the latest batch, or nothing
+    acquire::Any
+    enqueue::Any
+    release::Any
+    frames::Int           # frames whose download was queued behind their batch
+    discarded::Int        # queued downloads that did not hold an output state
+end
+
+function OutputPipeline(state::StepState, acquire, enqueue, release)
+    pinned(T, n) = (a = zeros(T, n); CUDA.pin(a); a)
+    fh = (pinned(Float64, length(state.fh)), pinned(Float64, length(state.fh)))
+    ih = (pinned(Int32, length(state.ih)), pinned(Int32, length(state.ih)))
+    events = (CuEvent(CUDA.EVENT_DISABLE_TIMING), CuEvent(CUDA.EVENT_DISABLE_TIMING))
+    return OutputPipeline(fh, ih, events, 1, 0, false, 0, NaN, NaN, nothing, acquire, enqueue, release, 0, 0)
+end
+
+function queue_readback!(p::OutputPipeline, state::StepState)
+    slot = p.slot
+    enqueue_readback!(state, p.fh[slot], p.ih[slot], p.events[slot])
+    p.slot = 3 - slot
+    return slot
+end
+
+wait_readback!(p::OutputPipeline, state::StepState, slot::Int) =
+    complete_readback!(state, p.fh[slot], p.ih[slot], p.events[slot])
+
+function discard_download!(p::OutputPipeline)
+    if p.download !== nothing
+        p.release(p.download)
+        p.download = nothing
+        p.discarded += 1
+    end
+    return nothing
+end
+
+# Size of a batch queued behind the current one, which starts near `start`
+# with the displacement bound `dx`. Like `batch_size`, it ends at the projected
+# rebuild or deadline, with one step of margin for timestep variation towards
+# the deadline. The device stop flags still end the batch exactly.
+function queued_batch_size(start, deadline, dt, dx, d4, h, kmax::Int)
+    est_output = (deadline - start) / dt + 1
+    est_rebuild = d4 > 0 ? (h - dx) / d4 : Inf
+    est = min(est_output, est_rebuild)
+    isfinite(est) || return kmax
+    return clamp(floor(Int, est) + 1, 1, kmax)
+end
+
+"""
+    launch_step_batch!(ctx, K, use_graph, timed)
+
+Enqueue `K` steps followed by the conditional cell-grid preparation whose
+header the next step-state readback publishes.
+"""
+function launch_step_batch!(ctx, K::Int, use_graph::Bool, timed::Bool)
+    (; gpu, cl, state, SimKernel, floating, open_boundary, HourGlass) = ctx
+    @timeit HourGlass "03 Launch Steps" begin
+        if use_graph
+            # Reuse a small set of graph sizes instead of launching one graph
+            # per step. Device stop flags still guard every individual step.
+            remaining = K
+            while remaining > 0
+                steps = prevpow(2, min(remaining, 32))
+                launch_step_graph!(ctx, steps)
+                remaining -= steps
+            end
+        else
+            state.direct_batches += 1
+            for _ in 1:K
+                enqueue_step!(ctx, timed)
+            end
+        end
+    end
+
+    # Batch ends have accepted full positions. Fixed grids also check for
+    # escapes here and request a rebuild before further steps or output.
+    # Publish the grid header in the existing timestep readback.
+    @timeit HourGlass "02a Prepare Cell Grid" prepare_cell_grid!(cl, gpu.Position, SimKernel.H⁻¹; step = state,
+        freeze_state = cl.fixed_grid || open_boundary !== nothing ? grid_freeze_state(gpu, floating) : nothing,
+        periodic_state = periodic_particle_state(gpu, floating))
+    return nothing
+end
+
 # Mirror the device state into the meta data after a read back.
 function sync_meta_data!(SimMetaData, state::StepState)
     SimMetaData.Iteration = Int(state.ih[I_ITER])
@@ -1640,7 +1749,8 @@ function SimulationLoop(SimDensityDiffusion::SDD, SimViscosity::SV, SimKernel,
                         motion, state::StepState{FloatType};
                         floating = nothing, external_forces = (), damping = (), rotation = nothing, open_boundary = nothing,logger = nothing, diagnostics = nothing,
                         divergence_cleaning = nothing, density_observer = nothing, output_clip_times = nothing,
-                        sample_deadline = Inf, clip_to_sample = false, pair_signal = sup.PairSignal) where {Dimensions, FloatType, SMode, KMode, BMode, LMode,
+                        sample_deadline = Inf, clip_to_sample = false, pair_signal = sup.PairSignal,
+                        pipeline::Union{Nothing, OutputPipeline} = nothing) where {Dimensions, FloatType, SMode, KMode, BMode, LMode,
                                                    SDD <: SPHDensityDiffusion, SV <: SPHViscosity}
     validate_shifting(SMode, SimMetaData.TimeSteppingMode, SimMetaData.VariableResolution)
     if divergence_cleaning !== nothing
@@ -1746,7 +1856,13 @@ function SimulationLoop(SimDensityDiffusion::SDD, SimViscosity::SV, SimKernel,
     t_out = min(frame_time, sample_deadline)
     clip_time = output_clip_times === nothing ? frame_time : output_clip_times[searchsortedfirst(output_clip_times, frame_time)]
     clip_to_sample && (clip_time = min(clip_time, sample_deadline))
-    set_output_time!(state, t_out; clip_timestep = SimMetaData.GPUClipTimeStepToOutput, clip_time)
+    if pipeline !== nothing && pipeline.queued != 0
+        # The device advanced to this deadline behind the batch queued last call.
+        pipeline.queued_next && pipeline.advanced == t_out && !interaction_mode_changed ||
+            error("A queued step batch does not start the requested output interval.")
+    else
+        set_output_time!(state, t_out; clip_timestep = SimMetaData.GPUClipTimeStepToOutput, clip_time)
+    end
 
     if SingleNeighbor && interaction_mode_changed && state.primed && cl.nrebuilds > 0
         # The carried derivative belongs to the previous operator/compiler options.
@@ -1777,38 +1893,76 @@ function SimulationLoop(SimDensityDiffusion::SDD, SimViscosity::SV, SimKernel,
     generation = cl.generation
     image_generation = sup.PeriodicImages === nothing ? 0 : sup.PeriodicImages.cl.generation
     while true
-        K = batch_size(state, h, t_out, kmax)
-        @timeit HourGlass "03 Launch Steps" begin
-            if use_graph
-                # Reuse a small set of graph sizes instead of launching one graph
-                # per step. Device stop flags still guard every individual step.
-                remaining = K
-                while remaining > 0
-                    steps = prevpow(2, min(remaining, 32))
-                    launch_step_graph!(ctx, steps)
-                    remaining -= steps
-                end
+        if pipeline === nothing
+            K = batch_size(state, h, t_out, kmax)
+            launch_step_batch!(ctx, K, use_graph, timed)
+            @timeit HourGlass "13 Read Back State" begin
+                readback!(state)
+                sync_meta_data!(SimMetaData, state)
+            end
+        else
+            # The mirror holds the state at the end of the preceding batch,
+            # which is where a queued batch starts.
+            start = state.fh[F_TIME]
+            dt = state.fh[F_DT]
+            d4 = state.fh[F_DISP]
+            if pipeline.queued != 0
+                slot = pipeline.queued
+                K = pipeline.queued_steps
+                pipeline.queued = 0
             else
-                state.direct_batches += 1
-                for _ in 1:K
-                    enqueue_step!(ctx, timed)
+                K = batch_size(state, h, t_out, kmax)
+                launch_step_batch!(ctx, K, use_graph, timed)
+                slot = queue_readback!(pipeline, state)
+            end
+            # Keep the device busy while the host waits, unless the batch is
+            # expected to end in a rebuild, which the host must perform.
+            dx_end = state.fh[F_DX] + K * d4
+            if dt > 0 && dx_end < h
+                reaches = start + K * dt > t_out
+                queue_next = !reaches || isfinite(pipeline.deadline)
+                if reaches && queue_next
+                    pipeline.download === nothing || error("An output download is still pending.")
+                    dl = pipeline.acquire()
+                    pipeline.enqueue(dl)
+                    pipeline.download = dl
+                    launch_advance_output!(state, pipeline.deadline)
+                    pipeline.advanced = pipeline.deadline
+                    pipeline.queued_steps = queued_batch_size(t_out, pipeline.deadline, dt, dx_end, d4, h, kmax)
+                elseif queue_next
+                    pipeline.queued_steps = queued_batch_size(start + K * dt, t_out, dt, dx_end, d4, h, kmax)
                 end
+                if queue_next
+                    pipeline.queued_next = reaches
+                    launch_step_batch!(ctx, pipeline.queued_steps, use_graph, timed)
+                    pipeline.queued = queue_readback!(pipeline, state)
+                end
+            end
+            @timeit HourGlass "13 Read Back State" begin
+                wait_readback!(pipeline, state, slot)
+                sync_meta_data!(SimMetaData, state)
             end
         end
 
-        # Batch ends have accepted full positions. Fixed grids also check for
-        # escapes here and request a rebuild before further steps or output.
-        # Publish the grid header in the existing timestep readback.
-        @timeit HourGlass "02a Prepare Cell Grid" prepare_cell_grid!(cl, gpu.Position, SimKernel.H⁻¹; step = state,
-            freeze_state = cl.fixed_grid || open_boundary !== nothing ? grid_freeze_state(gpu, floating) : nothing,
-            periodic_state = periodic_particle_state(gpu, floating))
-
-        @timeit HourGlass "13 Read Back State" begin
-            readback!(state)
-            sync_meta_data!(SimMetaData, state)
-        end
-
         stop = state.ih[I_STOP]
+        if pipeline !== nothing
+            reached = stop == STOP_OUTPUT || (stop == STOP_NONE &&
+                GPUStepState.output_time_reached(SimMetaData.TotalTime, t_out, SimMetaData.GPUClipTimeStepToOutput))
+            # A queued download holds a frame only when this batch reached the deadline.
+            reached || discard_download!(pipeline)
+            if pipeline.queued != 0
+                if reached ? !pipeline.queued_next : stop != STOP_NONE
+                    # The queued steps met a stop flag, or set one at their first
+                    # timestep decision, and did nothing. Let them finish before
+                    # the host changes device state or buffers.
+                    CUDA.synchronize()
+                    pipeline.queued = 0
+                elseif !reached
+                    # No deadline advance happened: the batch continues this interval.
+                    pipeline.queued_next = false
+                end
+            end
+        end
         if stop == STOP_REBUILD
             @timeit HourGlass "02a Actual Calculate IndexCounter" begin
                 consume_cell_grid!(cl, state.ih) || error("A requested cell-list rebuild has no prepared grid.")
@@ -2410,6 +2564,20 @@ function RunSimulation(;SimGeometry::Vector{SPHGeometry{Dimensions, FloatType}},
     free    = Channel{OutputDownload{Dimensions}}(length(staging))
     jobs    = Channel{OutputFrameJob{Dimensions}}(length(staging))
     foreach(dl -> put!(free, dl), staging)
+    # Queue each next batch of steps before waiting for the current one when
+    # the device makes every timestep and output decision of a batch. Sampled
+    # or clipped schedules, timestep diagnostics, stage observers, synchronized
+    # timers and host-side batch-end work (open boundaries, floating bodies,
+    # periodic domains and fixed-grid freezing) keep the synchronous loop.
+    pipeline = if SimMetaData.GPUAsyncOutput && !SimMetaData.GPUSyncTimers && !SimMetaData.GPUClipTimeStepToOutput &&
+            SimStateSampling === nothing && SimOutputClipTimes === nothing && diagnostics === nothing &&
+            SimDensityObserver === nothing && !(SimTimeStepping isa DualSPHysicsSymplectic) &&
+            open_boundary === nothing && !floating.active && cl.periodicity === nothing &&
+            sup.PeriodicImages === nothing && !cl.fixed_grid
+        OutputPipeline(state, () -> take!(free), dl -> enqueue_download!(dl, gpu; floating), dl -> put!(free, dl))
+    else
+        nothing
+    end
     write_time = Ref(0.0)
     output_frames = Ref(1)
     grid_cells_scratch = CartesianIndex{Dimensions}[]
@@ -2543,6 +2711,9 @@ function RunSimulation(;SimGeometry::Vector{SPHGeometry{Dimensions, FloatType}},
                       "bounding-box host partial reads: $(cl.bbox_host_readbacks)"
                 @info "Host read backs of the step state: $(state.readbacks) for $(SimMetaData.Iteration) steps, " *
                       "captured step graphs: $(length(state.graphs))"
+                pipeline === nothing ||
+                    @info "Pipelined batches: $(pipeline.frames) output frames queued behind their batch, " *
+                          "$(pipeline.discarded) queued downloads discarded"
                 if steps_taken > 0 && isfinite(ms_per_step) && isfinite(mparticle_steps_per_s)
                     @info @sprintf("Solver throughput: %.4f ms/step, %.4f M particle-steps/s, mean dt = %.6e s (%d steps)",
                                    ms_per_step, mparticle_steps_per_s, mean_dt, steps_taken)
@@ -2598,11 +2769,16 @@ function RunSimulation(;SimGeometry::Vector{SPHGeometry{Dimensions, FloatType}},
         while true
             frame_deadline = next_output_time(SimMetaData)
             sample_deadline = sample_index <= length(sample_times) ? sample_times[sample_index] : Inf
+            if pipeline !== nothing
+                # The interval after this one, if the run continues past this frame.
+                pipeline.deadline = frame_deadline < SimMetaData.SimulationTime ?
+                    Float64(output_deadline(SimMetaData, SimMetaData.OutputIterationCounter + 1)) : NaN
+            end
             @timeit HourGlass "00 SimulationLoop" SimulationLoop(SimDensityDiffusion, SimViscosity, SimKernel, SimMetaData,
                                                                  SimConstants, gpu, cl, sup, red, motion, state;
                                                                  floating = floating, external_forces, damping, divergence_cleaning, rotation, open_boundary,logger = SimLogger, diagnostics,
                                                                  density_observer = SimDensityObserver, output_clip_times = SimOutputClipTimes,
-                                                                 sample_deadline, clip_to_sample = sample_floating, pair_signal)
+                                                                 sample_deadline, clip_to_sample = sample_floating, pair_signal, pipeline)
             accepted_time = SimMetaData.TotalTime
             if sample_index <= length(sample_times) && accepted_time >= sample_deadline
                 if sample_floating
@@ -2637,8 +2813,16 @@ function RunSimulation(;SimGeometry::Vector{SPHGeometry{Dimensions, FloatType}},
             end
 
             @timeit HourGlass "13 Output Frame" begin
-                dl = @timeit HourGlass "13a Wait For Staging Buffers" take!(free)
-                enqueue_download!(dl, gpu; floating)
+                dl = if pipeline !== nothing && pipeline.download !== nothing
+                    # Already copied behind the batch that reached this frame.
+                    queued = pipeline.download
+                    pipeline.download = nothing
+                    pipeline.frames += 1
+                    queued
+                else
+                    staged = @timeit HourGlass "13a Wait For Staging Buffers" take!(free)
+                    enqueue_download!(staged, gpu; floating)
+                end
                 job = OutputFrameJob{Dimensions}(dl, counter, Float64(t_out), grid)
                 if SimMetaData.GPUAsyncOutput
                     put!(jobs, job)
