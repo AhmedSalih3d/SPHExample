@@ -82,14 +82,13 @@ const PHYSICAL_CONSTANT_DESCRIPTIONS = Dict(
     :ν₀ => "Kinematic viscosity used by the selected viscous model.",
     :BlinConstant => "Model coefficient used by the Blin viscosity formulation.",
     :SmagorinskyConstant => "Smagorinsky coefficient used by the SPS viscosity model.",
+    :BackgroundPressure => "Constant pressure offset added by the equation of state, in pascals.",
 )
 
 function _physical_constant_rows(constants)
     rows = NTuple{3, String}[]
     for field in fieldnames(typeof(constants))
-        description = get(PHYSICAL_CONSTANT_DESCRIPTIONS, field, nothing)
-        description === nothing &&
-            throw(ArgumentError("No description is registered for physical constant '$field'"))
+        description = get(PHYSICAL_CONSTANT_DESCRIPTIONS, field, "Description unavailable")
         push!(rows, (string(field), _format_value(getfield(constants, field)), description))
     end
     return rows
@@ -449,7 +448,9 @@ function write_simulation_report(
         throw(ArgumentError("Simulation report requires at least one fluid particle"))
 
     density = particles.Density[fluid_indices]
-    pressure = EquationOfStateGamma7.(density, constants.c₀, constants.ρ₀)
+    background_pressure = hasproperty(constants, :BackgroundPressure) ?
+                          constants.BackgroundPressure : zero(constants.ρ₀)
+    pressure = EquationOfStateGamma7.(density, constants.c₀, constants.ρ₀, inv(constants.ρ₀), background_pressure)
     speed = [
         sqrt(sum(abs2, velocity)) for
         velocity in particles.Velocity[fluid_indices]
