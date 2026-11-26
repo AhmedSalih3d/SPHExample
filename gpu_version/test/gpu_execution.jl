@@ -6,17 +6,18 @@ using HDF5
 
 include(joinpath(@__DIR__, "..", "benchmark", "cases.jl"))
 
-function simulate(case; graph, batch, double_position, scheme, async_output = true)
+function simulate(case; graph, batch, double_position, scheme, async_output = true, fixed_grid = false, duration = 0.06f0)
     return mktempdir() do save
         kwargs = case.build(Float32, save)
         meta = kwargs.SimMetaData
-        meta.SimulationTime = 0.06f0
+        meta.SimulationTime = duration
         meta.OutputTimes = 0.01f0
         meta.GPUUseGraph = graph
         meta.GPUMaxStepsPerSync = batch
         meta.GPUDoublePosition = double_position
         meta.GPUOutputQueueBytes = 1024^2
         meta.GPUAsyncOutput = async_output
+        meta.GPUFixedGrid = fixed_grid
         particles = AllocateDataStructures(kwargs.SimGeometry, meta)
         logger = SimulationLogger(save)
         try
@@ -34,11 +35,13 @@ function simulate(case; graph, batch, double_position, scheme, async_output = tr
                density = read(root["PointData/Density"]))
         end
         log_path = joinpath(save, "SimulationOutput.log")
-        queued = isfile(log_path) ? match(r"Pipelined batches: (\d+)", read(log_path, String)) : nothing
+        log = isfile(log_path) ? read(log_path, String) : ""
+        logged(pattern) = (m = match(pattern, log); m === nothing ? 0 : parse(Int, m[1]))
         return (; steps = meta.Iteration, time = meta.TotalTime,
                 position = particles.Position[order], density = particles.Density[order],
                 velocity = particles.Velocity[order], output,
-                queued_frames = queued === nothing ? 0 : parse(Int, queued[1]))
+                queued = (; frames = logged(r"Pipelined batches: (\d+)"),
+                    frozen = logged(r"frozen particles \(total\): (\d+)")))
     end
 end
 
@@ -65,9 +68,23 @@ end
         case = BENCH_CASES[index]
         reference = simulate(case; graph = true, batch, double_position = true, scheme, async_output = false)
         result = simulate(case; graph = true, batch, double_position = true, scheme)
-        @test reference.queued_frames == 0
-        @test result.queued_frames > 0
-        @test Base.structdiff(result, (; queued_frames = 0)) == Base.structdiff(reference, (; queued_frames = 0))
+        @test reference.queued.frames == 0
+        @test result.queued.frames > 0
+        @test Base.structdiff(result, (; queued = 0)) == Base.structdiff(reference, (; queued = 0))
+    end
+end
+
+@testset "fixed-grid batches queued behind readbacks preserve integration and saved frames" begin
+    # Fixed grids queue batches like dynamic grids and rebuild on the host.
+    # Without frozen particles, batch boundaries do not affect the results.
+    for index in (1, 4), batch in (4, 128), scheme in (SymplecticTimeStepping(), SingleNeighborTimeStepping())
+        case = BENCH_CASES[index]
+        options = (; graph = true, batch, double_position = true, scheme, fixed_grid = true, duration = 0.3f0)
+        reference = simulate(case; options..., async_output = false)
+        result = simulate(case; options...)
+        @test reference.queued.frozen == result.queued.frozen == 0
+        @test result.queued.frames > 0
+        @test Base.structdiff(result, (; queued = 0)) == Base.structdiff(reference, (; queued = 0))
     end
 end
 

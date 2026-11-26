@@ -3116,8 +3116,10 @@ the standard *gather* formulation:
   rebuild. Every step, timestep and stop decision is unchanged, so particle
   states and frames are bit-identical to the synchronous loop. Sampled or
   clipped output schedules, timestep diagnostics, stage observers,
-  `GPUSyncTimers`, `DualSPHysicsSymplectic`, open boundaries, floating bodies,
-  periodic domains and fixed grids keep the synchronous loop. The log reports
+  `GPUSyncTimers`, `DualSPHysicsSymplectic`, open boundaries, floating bodies
+  and periodic domains keep the synchronous loop. Fixed grids are included;
+  their escape check runs at the end of each batch, so once a particle
+  freezes, later frames can depend on where queued batches end. The log reports
   how many frames were queued behind their batch and how many queued
   downloads were discarded. On the RTX A1000 (Float32 with Float64 positions,
   warmed, alternating runs), `StillWedgeMDBC.jl` (3,027 particles, 8,502
@@ -3125,7 +3127,15 @@ the standard *gather* formulation:
   all frames bit-identical; before, the GPU idled for a median 0.38 ms at each
   of its 403 readbacks. A 3 s lid-driven cavity run, dominated by 322 host
   rebuilds, took 1.56 s instead of 1.59 s (median of six), also with
-  bit-identical frames.
+  bit-identical frames. With `GPUFixedGrid = true` (four warmed rounds, every
+  frame bit-identical to the synchronous loop): the wedge took 0.415 s instead
+  of 0.555 s, the 3 s cavity at dx = 0.01 1.510 s instead of 1.535 s, a 5 s
+  cavity at dx = 0.02 (37 frozen particles) 0.650 s instead of 0.675 s, the
+  2D mDBC dam break 0.280 s instead of 0.290 s and the 3D dam break 0.860 s
+  instead of 0.880 s. The 2D moving square alternated between two GPU clock
+  states in both loops, with matching times in each state.
+  A device-side fixed-grid rebuild queued behind each batch, tried on the same
+  cases, was not consistently faster than these host rebuilds and is not used.
 * **mDBC on the GPU.** One thread (or `K` lanes) per boundary particle with
   a ghost node gathers the fluid neighbours of the node, assembles the
   `(D+1)×(D+1)` system in registers and solves it with StaticArrays inside
@@ -4553,7 +4563,8 @@ leaving unreached deadlines and rebuild requests unchanged.
 `test/gpu_execution.jl` compares batches queued behind readbacks with the
 synchronous loop (`GPUAsyncOutput = false`) for short and long batches, both
 schemes and three cases. It requires identical steps, final particle fields
-and saved frames, and checks that frames were actually queued:
+and saved frames, and checks that frames were actually queued. Its fixed-grid
+set repeats the comparison with `GPUFixedGrid = true` and no frozen particles:
 
 ```bash
 julia --project=gpu_version -L gpu_version/test/step_state.jl gpu_version/test/gpu_execution.jl

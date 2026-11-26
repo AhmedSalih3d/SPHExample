@@ -2567,13 +2567,15 @@ function RunSimulation(;SimGeometry::Vector{SPHGeometry{Dimensions, FloatType}},
     # Queue each next batch of steps before waiting for the current one when
     # the device makes every timestep and output decision of a batch. Sampled
     # or clipped schedules, timestep diagnostics, stage observers, synchronized
-    # timers and host-side batch-end work (open boundaries, floating bodies,
-    # periodic domains and fixed-grid freezing) keep the synchronous loop.
+    # timers and host-side batch-end work (open boundaries, floating bodies and
+    # periodic domains) keep the synchronous loop. Fixed grids are included:
+    # their escape check runs at the end of every batch, so a freeze can be
+    # detected at a different step when queued batches end elsewhere.
     pipeline = if SimMetaData.GPUAsyncOutput && !SimMetaData.GPUSyncTimers && !SimMetaData.GPUClipTimeStepToOutput &&
             SimStateSampling === nothing && SimOutputClipTimes === nothing && diagnostics === nothing &&
             SimDensityObserver === nothing && !(SimTimeStepping isa DualSPHysicsSymplectic) &&
             open_boundary === nothing && !floating.active && cl.periodicity === nothing &&
-            sup.PeriodicImages === nothing && !cl.fixed_grid
+            sup.PeriodicImages === nothing
         OutputPipeline(state, () -> take!(free), dl -> enqueue_download!(dl, gpu; floating), dl -> put!(free, dl))
     else
         nothing
