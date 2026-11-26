@@ -9,6 +9,11 @@ and laminar+SPS viscosity, all density diffusion models, dynamic and mDBC
 boundary conditions, particle shifting, prescribed motion of bodies) is
 supported in 2D and 3D, in `Float64` or `Float32`.
 
+Each simulation currently uses one CUDA device. The
+[dual-GPU design study](docs/dual_gpu_simulation.md) describes how domain
+decomposition and halo exchange could support a single run across two devices,
+and which workloads could benefit.
+
 ## Default timestep criterion
 
 Ordinary GPU symplectic and single-neighbor simulations now use a neighbor-based
@@ -40,9 +45,8 @@ Set `GPULegacyTimestep = true` in `SimulationMetaData` to reproduce the previous
 ordinary criterion. Historical SPHERIC comparison scripts explicitly select it.
 The optional `GPUTimestepDiagnosticsEvery` provenance recorder currently requires
 this legacy setting; requesting it with the new criterion fails explicitly.
-The new signal stays on the GPU, with one atomic maximum per interaction block
-and a single scalar live device allocation (4/8 bytes; allocator reservations
-are larger). See the [StillWedge timing comparison](validation%20cases/still_wedge_timestep/README.md).
+See the [StillWedge timing comparison](validation%20cases/still_wedge_timestep/README.md)
+for measurements from the original rollout.
 
 ## Reference timestep safeguard
 
@@ -1446,13 +1450,15 @@ level is the highest fluid particle (the DualSPHysics convention); pass
 
 #### Optional Typst PDF summary
 
-The shared `write_simulation_report` API can create an editable Typst source
-file and PDF summary for any GPU `RunSimulation` result. Its implementation
-and layout are in [SimulationReports.jl](src/SimulationReports.jl) and
-[SimulationReportTemplate.typ](src/SimulationReportTemplate.typ). PDF
-compilation uses `Typst_jll`, included in the GPU project; no separate Typst
-installation is needed. Call it after `RunSimulation`, passing the same
-configuration objects used for that run:
+Use `write_simulation_report` to generate editable Typst source and a PDF
+summary for a GPU run with fluid particles. The GPU project's `Typst_jll`
+dependency provides the PDF compiler. See the
+[report writer](src/SimulationReports.jl) and
+[layout template](src/SimulationReportTemplate.typ).
+
+Enable `StoreLog` in the simulation metadata so
+`RunSimulation` writes `SimulationOutput.log` to `SaveLocation`. After the
+run, pass the result and the same configuration objects to the report writer:
 
 ```julia
 report_files = write_simulation_report(
@@ -1468,25 +1474,43 @@ report_files = write_simulation_report(
 )
 ```
 
-By default, the report name comes from `SimMetaData.SimulationName`. The
-StillWedge example demonstrates the optional call; its `GeneratePDFReport`
-switch near the top of `example/StillWedgeMDBC.jl` controls whether that
-example generates the report. Run from the repository root:
+The report name defaults to `SimMetaData.SimulationName`. Pass
+`simulation_name = "My report"` to override it, or `compile_pdf = false` to
+generate the editable Typst source only. The returned `typ_path` identifies
+the source file, and `pdf_path` identifies the PDF when compilation is enabled.
+
+The StillWedge example generates both files by default. Set
+`GeneratePDFReport = false` near the top of
+`example/StillWedgeMDBC.jl` to skip report generation. Run from the repository
+root:
 
 ```bash
 julia --project=gpu_version gpu_version/example/StillWedgeMDBC.jl
 ```
 
 `<SimulationName>_report.typ` and `<SimulationName>_report.pdf` are written to
-the run's `SaveLocation` (for example, `StillWedge_report.typ` and
-`StillWedge_report.pdf`). The report summarizes the run settings, performance
-and solver diagnostics, plus minimum, mean and maximum final fluid density,
-pressure and speed. Boundary particles are excluded from those statistics.
+the run's `SaveLocation`. For the example, look for `StillWedge_report.typ` and
+`StillWedge_report.pdf` in `C:/TestSimulations/StillWedge2D_MDBC_GPU` unless
+you change the output location. The report summarizes the run settings,
+performance and solver diagnostics, plus minimum, mean and maximum final fluid density,
+pressure and speed. Pressure statistics include the equation-of-state offset
+from `SimulationConstants.BackgroundPressure`, which also appears in the
+physical-constants table. Boundary particles are excluded from those statistics.
 It reorganizes the logger's environment, model settings, effective GPU
 configuration, memory accounting, output-frame progress and phase timings into
 colored, labeled tables, with a guide explaining each component. It does not
 paste the raw log into the PDF. The editable `.typ` source is kept alongside
 the PDF.
+
+To test report generation and PDF compilation with a synthetic simulation
+result, run the following from the repository root. This test does not need
+an NVIDIA GPU.
+
+```bash
+julia --project=gpu_version gpu_version/test/typst_report.jl
+```
+
+#### Particle sampling and geometry export
 
 The particles come from `ParticleRegion` and `sample_particles`
 (`src/ParticleGenerator.jl`): one lattice of spacing `dx` is laid over all
@@ -1540,6 +1564,10 @@ The geometry tests need no GPU:
 `julia --project=gpu_version gpu_version/test/still_wedge_middle_square_geometry.jl`.
 
 ### StillWedge performance
+
+The [occupied-grid reuse proposal](benchmark/still_wedge_grid_reuse.md)
+describes how the output writer could reuse the grid mesh when consecutive
+frames occupy the same cells.
 
 The StillWedge example uses the original **symplectic** timestep scheme,
 Float64 positions, Float32 force calculations, boundary forces, and its
