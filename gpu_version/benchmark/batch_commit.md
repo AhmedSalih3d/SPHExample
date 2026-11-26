@@ -5,7 +5,15 @@ step's commit with the next step's timestep selection. The first selection
 and last commit stay complete, so graph batches can still be replayed or
 followed by direct execution independently. A batch of `B` steps removes
 `B - 1` launches. Single-block final integration retains its existing fused
-commit, and direct/timed launches retain their separate control kernels.
+commit, and timed launches retain their separate control kernels.
+
+Without floating bodies, open boundaries, density observers or timers, the
+last block of a multi-block final integration then runs that control work
+itself (`complete_final_step!`): every block publishes its partial reductions,
+counts itself in a device counter, and the block that completes the count
+commits the step or runs the combined commit and selection on all partials,
+then resets the counter. This removes one more launch per step, including
+direct launches, whose timestep selection keeps its own launch.
 
 The combined kernel commits on thread one, then synchronizes the block
 before reading the clock, phase or stop flags for the next selection. All
@@ -92,7 +100,11 @@ julia --project=gpu_version -t 4,0 gpu_version/benchmark/batch_commit.jl --round
 
 `test/batch_commit.jl` compares the combined control launch directly with
 separate commit/selection over active, stopped, output-deadline and rebuild
-transitions in both precisions and with output clipping on/off. Its complete
+transitions in both precisions and with output clipping on/off. It also
+compares final integration that completes the step in its last block with
+final integration followed by the separate commit or combined control launch,
+over the same transitions, requiring identical particles, partials, step state
+and a reset counter. Its complete
 simulations compare direct execution against batched graphs in 2D/3D,
 Float32/Float64, both steppers, compact/full buffers, cached/uncached fields,
 moving walls, floating placement and timestep diagnostic output. Every full

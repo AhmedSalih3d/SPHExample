@@ -92,6 +92,9 @@ mutable struct StepState{T}
     graph_kernels_prepared::Bool
     graph_capture_error::Union{Nothing, String}
     graphs::Dict{Tuple{UInt, Int, Int}, CUDA.CuGraphExec}
+    # Blocks of a multi-block final integration that have finished; the last
+    # one completes the step and resets it to zero.
+    blocks_done::CuVector{Int32}
 end
 
 function StepState{T}(; dt = zero(T), time = zero(T), dx = zero(T), iteration::Integer = 0) where {T}
@@ -105,7 +108,7 @@ function StepState{T}(; dt = zero(T), time = zero(T), dx = zero(T), iteration::I
     CUDA.pin(fh)
     CUDA.pin(ih)
     return StepState{T}(CuArray(fh), CuArray(ih), fh, ih, false, 0, false, false, false, false, false, nothing, 0, 0, 0, false, nothing,
-                        Dict{Tuple{UInt, Int, Int}, CUDA.CuGraphExec}())
+                        Dict{Tuple{UInt, Int, Int}, CUDA.CuGraphExec}(), CUDA.zeros(Int32, 1))
 end
 
 """
