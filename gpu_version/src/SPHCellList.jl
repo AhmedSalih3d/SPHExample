@@ -1301,7 +1301,10 @@ and rebuild evaluations refresh that cache at the accepted full state.
 Interior steps of a multi-block CUDA graph use `finish_next = true` to commit
 this step and select the next timestep together; the following step then sets
 `finish_current = false`. The first and last steps retain standalone batch
-boundaries. Direct launches and single-block integration keep the default path.
+boundaries. Without floating bodies, open boundaries, density observers or
+`timed`, the last block of a multi-block final integration commits the step,
+or commits it and selects the next timestep, in the same launch
+(`complete_final_step!`).
 """
 function enqueue_step!(ctx, timed::Bool; finish_current::Bool = true, finish_next::Bool = false)
     (; gpu, cl, sup, red, motion, state, SimKernel, SimConstants, SimDensityDiffusion, SimViscosity,
@@ -1435,19 +1438,30 @@ function enqueue_step!(ctx, timed::Bool; finish_current::Bool = true, finish_nex
         fraction = 1.0, pos_cells = sup.PosCells, cell_ids = gpu.CellID, grid, H = SimKernel.H,
         prepared = true, coefficient_slot = 3)
 
+    # The last final-integration block can commit the step and select the next
+    # timestep when nothing else of the step follows it.
+    open_boundary = get(ctx,:open_boundary,nothing)
+    density_observer = get(ctx, :density_observer, nothing)
+    fused_end = red.nblocks != 1 && !floats && open_boundary === nothing && density_observer === nothing && !timed
+    batch_end = !fused_end ? nothing : (; done = state.blocks_done,
+        finish = !finish_next ? nothing : GPUKernels.finish_arguments(red, SimKernel, SimConstants;
+            diagnostics = get(ctx, :diagnostics, nothing), stage_sampler = sampler, dt_limit = Inf,
+            cleaning = cleaning_fields(get(ctx,:divergence_cleaning,nothing)), pair_signal, commit_previous = true))
+
     @phase HourGlass "11 Update To Final TimeStep" timed launch_final_step!(
         gpu.Position, gpu.Velocity, gpu.Acceleration, gpu.Density,
         sup.dρdtI, sup.ρₙ⁺, position_half, velocity_half, gpu.Type,
         sup.∇Cᵢ, sup.∇◌rᵢ, state, SimKernel, SimConstants, red, FlagShift;
         boundary_mode = get(ctx, :boundary_mode, SimpleMDBC()),
         ghost_points = gpu.GhostPoints, ghost_normals = gpu.GhostNormals, boundary_slots = gpu.BoundarySlot,
-        pos_cells = sup.PosCells, CellID = gpu.CellID, grid = grid, commit_step = red.nblocks == 1 && get(ctx,:open_boundary,nothing) === nothing,
+        pos_cells = sup.PosCells, CellID = gpu.CellID, grid = grid, commit_step = red.nblocks == 1 && open_boundary === nothing,
         inverse_density = sup.InvDensityₙ⁺,
         next_inverse_density = get(ctx, :cache_final_state, false) ? sup.InvDensity : nothing,
         next_pressure = get(ctx, :cache_final_state, false) ? sup.Pressure : nothing,
         diagnostics = get(ctx, :diagnostics, nothing), particle_ids = gpu.ID,
-        damping = get(ctx, :damping, ()),cleaning = cleaning_fields(get(ctx,:divergence_cleaning,nothing)),pair_signal)
-    observe_density_stage!(get(ctx, :density_observer, nothing), :corrector_stored, ctx, state)
+        damping = get(ctx, :damping, ()),cleaning = cleaning_fields(get(ctx,:divergence_cleaning,nothing)),pair_signal,
+        batch_end)
+    observe_density_stage!(density_observer, :corrector_stored, ctx, state)
 
     # Rigid final placement reads neither time nor phase, so a one-block
     # integration may commit before this launch without changing body placement.
@@ -1458,11 +1472,10 @@ function enqueue_step!(ctx, timed::Bool; finish_current::Bool = true, finish_nex
         UseMDBC && GPUKernels.launch_refresh_floating_ghosts!(gpu, floating_mdbc_pose(ctx, false), state)
     end
 
-    open_boundary = get(ctx,:open_boundary,nothing)
     launch_open_boundary_events!(open_boundary,gpu,sup,cl,SimKernel,SimConstants,state)
     launch_open_boundary_values!(open_boundary,gpu.Position,gpu.Velocity,gpu.Density,
         gpu.Type,gpu.GroupMarker,CellStart,grid,SimKernel,SimConstants,state)
-    if red.nblocks != 1 || open_boundary !== nothing
+    if (red.nblocks != 1 || open_boundary !== nothing) && !fused_end
         if finish_next
             launch_finish!(state, red, SimKernel, SimConstants;
                 diagnostics = get(ctx, :diagnostics, nothing), stage_sampler = sampler,
@@ -2441,7 +2454,7 @@ function RunSimulation(;SimGeometry::Vector{SPHGeometry{Dimensions, FloatType}},
 
     pair_signal = simulation_pair_signal(sup.PairSignal, NumberOfPoints, state.configuration.effective, red.nblocks)
     gpu_buffers = (; particles = gpu, support = sup, cells = cl,
-        auxiliary = (motion, rotation, external_forces, floating, open_boundary,divergence_cleaning,red.partial, state.f, state.i, diagnostics, pair_signal))
+        auxiliary = (motion, rotation, external_forces, floating, open_boundary,divergence_cleaning,red.partial, state.f, state.i, state.blocks_done, diagnostics, pair_signal))
 
     initial_floating = floating.active ? floating_state(floating) : nothing
     floating_markers = [geom.GroupMarker for geom in SimGeometry if geom.Type == Floating]

@@ -3099,8 +3099,22 @@ the standard *gather* formulation:
   With multiple reduction blocks, interior graph steps combine the completed
   step's commit with the next timestep selection. A batch of `B` steps saves
   `B - 1` launches and retains complete first/last steps, the same stop decisions,
-  and the same arithmetic. Direct launches retain separate commit and selection.
+  and the same arithmetic. Direct launches select each timestep separately.
   See the [paired benchmark and validation](benchmark/batch_commit.md).
+  The last block of final integration to finish runs that commit, or the
+  combined commit and selection, itself instead of a following single-block
+  launch: each block publishes its partial reductions and counts itself in a
+  device counter, and the block that completes the count reads every partial
+  and resets the counter. Each step needs one launch fewer, and every decision
+  and value is unchanged; only the timestep selection that starts a graph batch
+  or a direct step keeps its own launch. Floating bodies, open boundaries,
+  density observers and `GPUSyncTimers` keep the separate launches. On the RTX
+  A1000 (three warmed, alternating rounds of complete runs), eleven cases from
+  3,027 to 171,496 particles (2D/3D, DBC/mDBC, wedges, lid-driven cavities,
+  dam breaks, moving squares and the duckling) kept every frame bit-identical.
+  Their median elapsed-time change was −0.5% (range −14.5% to +5.9%), within
+  the timing noise of these short runs: a launch-count reduction, not an
+  established speedup.
 * **Batches queued behind readbacks.** With `GPUAsyncOutput = true`, the host
   queues the next batch of steps before it waits for the current batch's
   readback, so the device keeps working while the host reads the step state,

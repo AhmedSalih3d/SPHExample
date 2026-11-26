@@ -31,6 +31,45 @@ const K = SPHExampleGPU.GPUKernels
     end
 end
 
+@testset "the last final-integration block completes the step" begin
+    for T in (Float32, Float64), finish in (false, true), scenario in (:active, :output, :rebuild, :stopped)
+        constants = SimulationConstants{T}(dx = 0.02, c₀ = 20)
+        kernel = SPHKernelInstance{2,T}(WendlandC2(); dx = constants.dx)
+        V = SVector{2,T}
+        n = 5 * 256 + 7
+        host = (V[V(i % 37, i ÷ 37) * T(0.02) for i in 1:n], V[V(sin(i), cos(i)) for i in 1:n],
+            V[V(cos(3i), sin(2i)) * T(4) for i in 1:n], T[1000 + i % 11 for i in 1:n], T[i % 7 - 3 for i in 1:n],
+            T[1001 + i % 13 for i in 1:n], V[V(i % 37, i ÷ 37) * T(0.02) + V(1e-3, 0) for i in 1:n],
+            V[V(cos(i), sin(i)) for i in 1:n], [i % 97 == 0 ? Fixed : i % 101 == 0 ? Frozen : Fluid for i in 1:n])
+        function run(completed_in_kernel)
+            red = ReductionWorkspace{SVector{3,T}}(n)
+            # A stopped step leaves the partials untouched.
+            fill!(red.partial, SVector{3,T}(-1, -1, -1))
+            state = StepState{T}(dt = T(0.001), time = 0.25, iteration = 17,
+                dx = scenario === :rebuild ? T(0.999) * kernel.h : zero(T))
+            set_output_time!(state, scenario === :output ? 0.2505 : 1.0)
+            state.ih[I_PHASE] = PHASE_DT_READY
+            scenario === :stopped && (state.ih[I_STOP] = STOP_OUTPUT)
+            copyto!(state.i, state.ih)
+            position, velocity, acceleration, density, rate, half_density, half_position, half_velocity, types = map(CuArray, host)
+            batch_end = !completed_in_kernel ? nothing : (; done = state.blocks_done,
+                finish = finish ? K.finish_arguments(red, kernel, constants; commit_previous = true) : nothing)
+            K.launch_final_step!(position, velocity, acceleration, density, rate, half_density, half_position,
+                half_velocity, types, CuArray{V}(undef, 0), CuArray{T}(undef, 0), state, kernel, constants, red, Val(false);
+                boundary_mode = NoMDBC(), batch_end)
+            if !completed_in_kernel
+                finish ? K.launch_finish!(state, red, kernel, constants; commit_previous = true) : K.launch_commit!(state)
+            end
+            return (map(Array, (position, velocity, acceleration, density)), Array(red.partial),
+                Array(state.f), Array(state.i), only(Array(state.blocks_done)))
+        end
+        separate, completed = run(false), run(true)
+        @test ReductionWorkspace{SVector{3,T}}(n).nblocks > 1
+        @test isequal(completed, separate)
+        @test completed[5] == 0
+    end
+end
+
 function simulate(D, T; graph, single, compact, moving, floating = false)
     return mktempdir() do save
         dx = T(0.02)

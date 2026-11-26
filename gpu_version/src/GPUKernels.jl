@@ -1309,7 +1309,8 @@ function final_step_kernel!(Position, Velocity, Acceleration, Density, dρdtI, �
                             Velocityₙ⁺, ParticleType, ∇Cᵢ, ∇◌rᵢ, step, SimKernel, SimConstants,
                             partial, ::Val{FlagShift}, boundary_mode, GhostPoints, GhostNormals, BoundarySlots,
                             PosCells, CellID, gridarg, InvDensity, NextInvDensity, NextPressure,
-                            diagnostic_partial, particle_ids, damping, ::Val{CommitStep}, n::Int32, cleaning = nothing, pair_signal = nothing) where {FlagShift, CommitStep}
+                            diagnostic_partial, particle_ids, damping, ::Val{CommitStep}, n::Int32, cleaning = nothing, pair_signal = nothing,
+                            batch_end = nothing) where {FlagShift, CommitStep}
     step_active(step) || return nothing
     dt = step_dt(step)
     (; g, ρ₀) = SimConstants
@@ -1403,6 +1404,44 @@ function final_step_kernel!(Position, Velocity, Acceleration, Density, dρdtI, �
     diagnostic_store!(diagnostic_partial, acc_diagnostic)
     # A single block has completed every particle write at the reduction barrier.
     CommitStep && threadIdx().x == 1 && commit_kernel!(step)
+    complete_final_step!(batch_end, step)
+    return nothing
+end
+
+"""
+    complete_final_step!(batch_end, step)
+
+Let the last block of a multi-block final integration complete the step in
+the same launch, instead of a following single-block kernel. Every block
+publishes its particle writes and partial reductions, then counts itself in
+`batch_end.done`. The last block commits the step (`batch_end.finish ===
+nothing`) or runs `finish_kernel!` with `commit_previous` on those partials,
+selecting the next timestep exactly like the separate launch, and resets the
+counter for the next step.
+"""
+@inline complete_final_step!(::Nothing, step) = nothing
+# Inlined with `finish_kernel!`: passing the argument bundle to an out-of-line
+# call makes every thread copy the kernel parameters to local memory.
+@inline function complete_final_step!(batch_end, step)
+    # Thread 1 wrote this block's partial reductions; publish them, count the
+    # block, and order the last block's reads after every counted write.
+    sync_threads()
+    last = CuStaticSharedArray(Int32, 1)
+    if threadIdx().x == Int32(1)
+        CUDA.threadfence()
+        ticket = CUDA.atomic_add!(pointer(batch_end.done), Int32(1))
+        is_last = ticket == gridDim().x - Int32(1)
+        is_last && CUDA.threadfence()
+        @inbounds last[1] = Int32(is_last)
+    end
+    sync_threads()
+    @inbounds (last[1] == Int32(0)) && return nothing
+    if batch_end.finish === nothing
+        threadIdx().x == Int32(1) && @inline commit_kernel!(step)
+    else
+        @inline finish_kernel!(step, batch_end.finish...)
+    end
+    threadIdx().x == Int32(1) && (@inbounds batch_end.done[1] = Int32(0))
     return nothing
 end
 
@@ -1412,7 +1451,12 @@ per block reduction results fit the reduction workspace; they are consumed by
 `launch_finish!` (device) or `finish_reduction(red, step_reduce, init)` (host).
 `step` is a `StepState` or a `HostStep` with a fixed `dt`.
 `commit_step = true` commits the device step after the reduction barrier and
-requires a single reduction block; multiple blocks need a separate commit launch.
+requires a single reduction block; multiple blocks need a separate commit launch
+or `batch_end`. With `batch_end = (; done, finish)` (a zeroed `Int32` counter and
+`nothing` or `finish_arguments(...; commit_previous = true)`), the last block to
+finish commits the step, or commits it and selects the next timestep, in this
+launch (see `complete_final_step!`). Use it only when nothing else of the step
+runs after final integration.
 With `pos_cells` (the `PosCell` array of the start-of-step positions) the
 kernel also writes the cell relative form of the new positions for the cell
 list whose sorted cell ids are `CellID`, so the next step needs no separate
@@ -1433,8 +1477,12 @@ function launch_final_step!(Position, Velocity, Acceleration, Density, dρdtI, �
                             ghost_points = nothing, ghost_normals = nothing, boundary_slots = nothing,
                             pos_cells = nothing, CellID = nothing, grid = nothing, commit_step::Bool = false,
                             inverse_density = nothing, next_inverse_density = nothing, next_pressure = nothing,
-                            diagnostics = nothing, particle_ids = nothing, damping = (), cleaning = nothing, pair_signal = nothing)
+                            diagnostics = nothing, particle_ids = nothing, damping = (), cleaning = nothing, pair_signal = nothing,
+                            batch_end = nothing)
     commit_step && red.nblocks != 1 && throw(ArgumentError("fused commit requires one reduction block"))
+    commit_step && batch_end !== nothing && throw(ArgumentError("a single-block commit and a batch-end completion are exclusive"))
+    batch_end === nothing || step isa StepState ||
+        throw(ArgumentError("batch-end completion requires the device step state"))
     next_inverse_density === nothing || length(next_inverse_density) == length(Density) ||
         throw(DimensionMismatch("Next-state reciprocal cache must have one entry per density"))
     next_pressure === nothing || length(next_pressure) == length(Density) ||
@@ -1446,12 +1494,14 @@ function launch_final_step!(Position, Velocity, Acceleration, Density, dρdtI, �
         particle_ids !== nothing && length(particle_ids) == n || throw(DimensionMismatch("Timestep diagnostics require one stable ID per particle"))
     end
     diagnostic_partial = diagnostics === nothing ? nothing : diagnostics.reduction.partial
-    @cuda threads=ELEMENTWISE_THREADS blocks=red.nblocks final_step_kernel!(
+    # Full inlining keeps the batch-end path from taking kernel parameters by
+    # reference, which would copy them to local memory in every thread.
+    @cuda always_inline=(batch_end !== nothing) threads=ELEMENTWISE_THREADS blocks=red.nblocks final_step_kernel!(
         Position, Velocity, Acceleration, Density, dρdtI, ρₙ⁺, Positionₙ⁺,
         Velocityₙ⁺, ParticleType, ∇Cᵢ, ∇◌rᵢ, step, SimKernel, SimConstants,
         red.partial, FlagShift, boundary_mode, ghost_points, ghost_normals, boundary_slots,
         pos_cells, CellID, grid, inverse_density, next_inverse_density, next_pressure,
-        diagnostic_partial, particle_ids, damping, Val(commit_step), Int32(n), cleaning, pair_signal)
+        diagnostic_partial, particle_ids, damping, Val(commit_step), Int32(n), cleaning, pair_signal, batch_end)
     return nothing
 end
 
@@ -1570,13 +1620,25 @@ body and open-boundary updates have completed, in place of `launch_commit!`.
 function launch_finish!(state::StepState{T}, red::ReductionWorkspace{SVector{3, T}}, SimKernel,
                         SimConstants; diagnostics = nothing, stage_sampler = nothing,dt_limit=Inf, timestep_controller=nothing,
                         commit_previous::Bool = false, cleaning = nothing, pair_signal = nothing) where {T}
+    @cuda threads=REDUCE_THREADS blocks=1 finish_kernel!(state, finish_arguments(red, SimKernel, SimConstants;
+        diagnostics, stage_sampler, dt_limit, timestep_controller, commit_previous, cleaning, pair_signal)...)
+    return nothing
+end
+
+"""
+    finish_arguments(red, SimKernel, SimConstants; commit_previous = false, ...) -> Tuple
+
+Arguments of `finish_kernel!` after the step state, shared by `launch_finish!`
+and the batch-end completion of `launch_final_step!`.
+"""
+function finish_arguments(red::ReductionWorkspace{SVector{3, T}}, SimKernel, SimConstants;
+                          diagnostics = nothing, stage_sampler = nothing, dt_limit = Inf, timestep_controller = nothing,
+                          commit_previous::Bool = false, cleaning = nothing, pair_signal = nothing) where {T}
     diagnostic_partial = diagnostics === nothing ? nothing : diagnostics.reduction.partial
     diagnostic_result = diagnostics === nothing ? nothing : diagnostics.result
-    @cuda threads=REDUCE_THREADS blocks=1 finish_kernel!(state, red.partial, Int32(red.nblocks),
-                                                        T(SimConstants.CFL), T(SimConstants.c₀),
-                                                        T(SimKernel.h), diagnostic_partial, diagnostic_result, stage_sampler,Float64(dt_limit),timestep_controller,
-                                                        Val(commit_previous), cleaning, pair_signal)
-    return nothing
+    return (red.partial, Int32(red.nblocks), T(SimConstants.CFL), T(SimConstants.c₀), T(SimKernel.h),
+            diagnostic_partial, diagnostic_result, stage_sampler, Float64(dt_limit), timestep_controller,
+            Val(commit_previous), cleaning, pair_signal)
 end
 
 # Single thread. Advances the time and the iteration counter after a step ran.
