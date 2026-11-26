@@ -79,3 +79,27 @@ both a changing-cell case and an edge-length change in focused grid tests.
 The output worker overlaps the GPU loop. Shorter geometry preparation can
 reduce output queue backpressure or shorten the final drain. A paired timing
 is needed to quantify the effect on elapsed simulation time.
+
+## Paired prototype results
+
+On an RTX 5080 with Julia 1.12.7, a temporary writer cache was tested on the
+four-second example. Both paths were warmed with a full run, then tested in
+12 pairs with alternating order and fresh output folders. The baseline used
+the same instrumented writer with caching disabled. Physics settings and
+output cadence were fixed. Both paths skipped viewers and reporting, and
+validation ran outside the timed interval.
+
+| Measurement | Baseline median | Cache median | Median paired cache/baseline | Cache faster |
+| --- | ---: | ---: | ---: | ---: |
+| Full example | 255.55 ms | 251.02 ms | 0.984 | 9/12 |
+| Solver wall time | 252.35 ms | 247.52 ms | 0.983 | 9/12 |
+| Output writer time | 47.50 ms | 47.00 ms | 1.039 | 5/12 |
+
+All runs completed 8,502 steps with three rebuilds and 404 timestep readbacks.
+Final particle state matched exactly by ID, and dataset hashes matched in
+both VTKHDF files across all 401 particle frames and 400 grid frames.
+
+The median paired wall-time improvement was about 1.7%, with individual
+pairs ranging from about 30% faster to 6% slower. Output writer timings also
+varied and favored the cache in five pairs. The experiment was inconclusive
+on runtime gain, so the temporary cache was removed.
