@@ -340,6 +340,7 @@ mutable struct SimulationMetaData{Dimensions,
     GPUMaxCells::Int             # safety limit for the size of the neighbour grid
     GPUInteractionThreads::Int   # threads per block for the interaction kernels
     GPULanesPerParticle::Int     # warp lanes per particle in the gather kernels (0 = automatic)
+    GPUShortRowBitWalk::Bool     # enumerate short interaction rows using lane bit sets
     GPUInteractionAlwaysInline::Bool # force inlining only in the interaction kernel
     GPUInteractionFastMath::Bool # relaxed arithmetic only in the interaction kernel
     GPURadialInteractions::Bool  # opt-in scalar Wendland arithmetic and symmetric linear diffusion
@@ -470,6 +471,7 @@ function SimulationMetaData{Dimensions, FloatType, SMode, KMode, BMode, LMode}(;
         GPUMaxCells::Int                        = 50_000_000,
         GPUInteractionThreads::Int              = 128,
         GPULanesPerParticle::Int                = 0,
+        GPUShortRowBitWalk::Bool                = false,
         GPUInteractionAlwaysInline::Bool        = true,
         GPUInteractionFastMath::Bool            = true,
         GPURadialInteractions::Bool             = false,
@@ -512,7 +514,7 @@ function SimulationMetaData{Dimensions, FloatType, SMode, KMode, BMode, LMode}(;
         FloatType(CurrentTimeStep), Float64(TotalTime), Float64(SimulationTime),
         IndexCounter, VisualizeInParaview, ExportSingleVTKHDF, ExportGridCells,
         OutputVariables, OpenLogFile, TimeSteppingMode, VariableResolution,
-        GPUSyncTimers, GPUDeterministicSort, GPUMaxCells, GPUInteractionThreads, GPULanesPerParticle,
+        GPUSyncTimers, GPUDeterministicSort, GPUMaxCells, GPUInteractionThreads, GPULanesPerParticle, GPUShortRowBitWalk,
         GPUInteractionAlwaysInline, GPUInteractionFastMath, GPURadialInteractions, GPUScalarSPSViscosity,
         GPUPreloadInteractionTypes,
         GPUBoundaryForces, GPUAsyncOutput, GPUMaxStepsPerSync, GPUUseGraph, GPUClipTimeStepToOutput,

@@ -6,7 +6,8 @@ using HDF5
 
 include(joinpath(@__DIR__, "..", "benchmark", "cases.jl"))
 
-function simulate(case; graph, batch, double_position, scheme, async_output = true, fixed_grid = false, duration = 0.06f0)
+function simulate(case; graph, batch, double_position, scheme, async_output = true, fixed_grid = false, duration = 0.06f0,
+                  short_row_bit_walk = false)
     return mktempdir() do save
         kwargs = case.build(Float32, save)
         meta = kwargs.SimMetaData
@@ -18,6 +19,7 @@ function simulate(case; graph, batch, double_position, scheme, async_output = tr
         meta.GPUOutputQueueBytes = 1024^2
         meta.GPUAsyncOutput = async_output
         meta.GPUFixedGrid = fixed_grid
+        meta.GPUShortRowBitWalk = short_row_bit_walk
         particles = AllocateDataStructures(kwargs.SimGeometry, meta)
         logger = SimulationLogger(save)
         try
@@ -42,6 +44,16 @@ function simulate(case; graph, batch, double_position, scheme, async_output = tr
                 velocity = particles.Velocity[order], output,
                 queued = (; frames = logged(r"Pipelined batches: (\d+)"),
                     frozen = logged(r"frozen particles \(total\): (\d+)")))
+    end
+end
+
+@testset "short-row bit walk preserves accepted state and saved frames" begin
+    for index in (1, 4, 6), graph in (false, true)
+        case = BENCH_CASES[index]
+        options = (; graph, batch = 32, double_position = true, scheme = SymplecticTimeStepping())
+        reference = simulate(case; options...)
+        result = simulate(case; options..., short_row_bit_walk = true)
+        @test result == reference
     end
 end
 
