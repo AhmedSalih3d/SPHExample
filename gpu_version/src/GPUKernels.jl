@@ -517,7 +517,7 @@ function interaction_kernel!(dρdtI, Acceleration, Kernel, KernelGradient, ∇C�
                             pair_rate = max(pair_rate, dot(vᵢⱼ, xᵢⱼ) * inverse_distance)
                         end
                         if pair_signal !== nothing
-                            pair_rate = max(pair_rate,abs(dot(vᵢⱼ,xᵢⱼ))/(xᵢⱼ²+SimKernel.η²))
+                            pair_rate = max(pair_rate, dot(vᵢⱼ, xᵢⱼ) / (xᵢⱼ² + SimKernel.η²))
                         end
                         density_symmetric_term = Radial ? radial_factor * dot(vᵢⱼ, xᵢⱼ) : dot(vᵢⱼ, ∇ᵢWᵢⱼ)
                         if cleaning !== nothing && typeᵢ == Fluid

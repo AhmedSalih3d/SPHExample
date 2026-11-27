@@ -77,8 +77,8 @@ if CUDA.functional()
             original = evaluate(nothing)
             measured = evaluate(support.PairSignal)
             x,v = Array(gpu.Position),Array(gpu.Velocity)
-            expected = maximum(abs(dot(v[i]-v[j],x[i]-x[j]))/(sum(abs2,x[i]-x[j])+kernel.η²)
-                for i in eachindex(x),j in eachindex(x) if i != j && sum(abs2,x[i]-x[j]) <= kernel.H²)
+            expected = max(zero(T), maximum(dot(v[i]-v[j],x[i]-x[j])/(sum(abs2,x[i]-x[j])+kernel.η²)
+                for i in eachindex(x),j in eachindex(x) if i != j && sum(abs2,x[i]-x[j]) <= kernel.H²))
             @test only(Array(support.PairSignal)) ≈ expected
             for (a,b) in zip(original,measured)
                 @test a ≈ b rtol=20eps(T)
@@ -93,6 +93,10 @@ if CUDA.functional()
             readback!(state)
             expected_dt = constants.CFL*kernel.h/(max(constants.c₀,10maximum(norm,v))+kernel.h*expected)
             @test state.fh[F_DT] ≈ expected_dt rtol=10eps(T)
+
+            gpu.Velocity .= -gpu.Position
+            evaluate(support.PairSignal)
+            @test only(Array(support.PairSignal)) == zero(T)
         end
     end
     include(joinpath(@__DIR__,"..","validation cases","spheric_test_06","case.jl"))

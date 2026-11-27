@@ -21,12 +21,12 @@ acoustic criterion, following the structure used by DualSPHysics:
 
 ```math
 \Delta t = \mathrm{CFL}\min\left(\sqrt{h/a_{\max}},
-\frac{h}{\max(c_0,10v_{\max})+h\max_{ij}\frac{|\mathbf v_{ij}\cdot\mathbf r_{ij}|}{r_{ij}^2+\eta^2}}\right).
+\frac{h}{\max(c_0,10v_{\max})+h q_{\max}}\right),\qquad
+q_{\max} = \max\left(0,\max_{ij}\frac{\mathbf v_{ij}\cdot\mathbf r_{ij}}{r_{ij}^2+\eta^2}\right).
 ```
 
-Here pairs are the accepted interaction neighbors. The absolute pair rate is
-conservative for both compression and expansion; the installed DualSPHysics
-5.4 source uses a one-sided signed maximum. This replaces the old expression
+Here pairs are the accepted interaction neighbors. Only positive signed pair
+rates contribute to the acoustic denominator. This replaces the old expression
 based on a particle's absolute position. It preserves the ordinary integrator,
 pressure, viscosity and diffusion operators, including mDBC, caches and graphs.
 Uniform, two-level and nested variable-resolution simulations use this default.
