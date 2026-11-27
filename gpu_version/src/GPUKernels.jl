@@ -502,9 +502,15 @@ function interaction_kernel!(dρdtI, Acceleration, Kernel, KernelGradient, ∇C�
                         dᵢⱼ   = sqrt(xᵢⱼ²)
                         q     = dᵢⱼ * h⁻¹ # in [0, 2]: the guard above enforces xᵢⱼ² <= H² = (2h)²
                         if Radial || viscous_dt !== nothing
-                            radial_factor = SPHKernels.radial_gradient_factor(SimKernel, q)
+                            if FlagKernel
+                                kernel_value, radial_factor = SPHKernels.kernel_value_and_radial_factor(SimKernel, q)
+                            else
+                                radial_factor = SPHKernels.radial_gradient_factor(SimKernel, q)
+                            end
                             ∇ᵢWᵢⱼ = radial_factor * xᵢⱼ
                             inverse_distance = one(T) / (xᵢⱼ² + SimKernel.η²)
+                        elseif FlagKernel
+                            kernel_value, ∇ᵢWᵢⱼ = SPHKernels.kernel_value_and_gradient(SimKernel, q, xᵢⱼ)
                         else
                             ∇ᵢWᵢⱼ = ∇Wᵢⱼ(SimKernel, q, xᵢⱼ)
                         end
@@ -596,10 +602,12 @@ function interaction_kernel!(dρdtI, Acceleration, Kernel, KernelGradient, ∇C�
                             if offsets !== nothing
                                 if typeᵢ == Fluid && slotⱼ != 0
                                     contact = normal_contact_rate(offsets[slotⱼ], xᵢⱼ, vᵢⱼ, dx, c₀)
-                                    acc += (mass_j / ρ₀ * SPHKernels.Wᵢⱼ(SimKernel, q)) * contact
+                                    weight = FlagKernel ? kernel_value : SPHKernels.Wᵢⱼ(SimKernel, q)
+                                    acc += (mass_j / ρ₀ * weight) * contact
                                 elseif typeᵢ == Floating && slotᵢ != 0 && ParticleType[j] == Fluid
                                     contact = normal_contact_rate(offsets[slotᵢ], -xᵢⱼ, -vᵢⱼ, dx, c₀)
-                                    acc -= (mass_j / ρ₀ * SPHKernels.Wᵢⱼ(SimKernel, q)) * contact
+                                    weight = FlagKernel ? kernel_value : SPHKernels.Wᵢⱼ(SimKernel, q)
+                                    acc -= (mass_j / ρ₀ * weight) * contact
                                 end
                             end
                             viscous_velocity = boundary_data === nothing ? vᵢⱼ :
@@ -651,7 +659,7 @@ function interaction_kernel!(dρdtI, Acceleration, Kernel, KernelGradient, ∇C�
                         end
 
                         if FlagKernel
-                            Wsum  += SPHKernels.Wᵢⱼ(SimKernel, q)
+                            Wsum  += kernel_value
                             ∇Wsum += ∇ᵢWᵢⱼ
                         end
 
@@ -926,8 +934,7 @@ end
                 q   = dᵢⱼ * h⁻¹ # in [0, 2]: the guard above enforces xᵢⱼ² <= H² = (2h)²
                 ρⱼ  = Density[j]
 
-                Wᵢⱼ   = SPHKernels.Wᵢⱼ(SimKernel, q)
-                ∇ᵢWᵢⱼ = ∇Wᵢⱼ(SimKernel, q, xᵢⱼ)
+                Wᵢⱼ, ∇ᵢWᵢⱼ = SPHKernels.kernel_value_and_gradient(SimKernel, q, xᵢⱼ)
 
                 Vⱼ    = divide_by_density(m₀, InvDensity, j, ρⱼ)
                 VⱼWᵢⱼ = Vⱼ * Wᵢⱼ

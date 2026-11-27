@@ -4550,6 +4550,11 @@ for small changes that make them precision generic (`Float32` literals), the
 
 ## Tests
 
+GPU mDBC reconstruction and `StoreKernelOutput` evaluate kernel values and gradients together,
+sharing polynomial terms for Wendland C2 and cubic splines. The focused regression checks
+Float32 and Float64 in 2D and 3D, including zero separation and the support edge:
+`julia --project=. test/kernel_value_and_gradient.jl` from `gpu_version`.
+
 ```bash
 julia --project=gpu_version gpu_version/test/runtests.jl
 ```

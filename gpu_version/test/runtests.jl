@@ -6,6 +6,7 @@ using StructArrays
 using LinearAlgebra
 using HDF5
 
+include(joinpath(@__DIR__, "kernel_value_and_gradient.jl"))
 include(joinpath(@__DIR__, "simulation_constants.jl"))
 include(joinpath(@__DIR__, "pairwise_timestep.jl"))
 include(joinpath(@__DIR__, "timestep_floor.jl"))

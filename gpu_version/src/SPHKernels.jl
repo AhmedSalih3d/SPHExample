@@ -129,6 +129,38 @@ end
     return dWdq * h⁻¹ * xᵢⱼ / (norm(xᵢⱼ) + η²)
 end
 
+@inline function kernel_value_and_radial_factor(kernel::SPHKernelInstance{<:WendlandC2}, q::T) where {T}
+    (; h⁻¹, αD) = kernel
+    s = muladd(-q, T(1//2), one(T))
+    s² = s * s
+    value = αD * s² * s² * muladd(T(2), q, one(T))
+    factor = αD * T(-5) * s² * s * (h⁻¹ * h⁻¹)
+    return value, factor
+end
+
+@inline function kernel_value_and_gradient(kernel::SPHKernelInstance{<:WendlandC2}, q, xᵢⱼ)
+    value, factor = kernel_value_and_radial_factor(kernel, q)
+    return value, factor * xᵢⱼ
+end
+
+@inline function kernel_value_and_gradient(kernel::SPHKernelInstance{<:CubicSpline}, q::T, xᵢⱼ) where {T}
+    (; h⁻¹, αD, η²) = kernel
+    if 0 <= q <= 1
+        q² = q * q
+        value = αD * muladd(muladd(T(3//4), q, T(-3//2)), q², one(T))
+        dWdq = αD * q * muladd(T(9//4), q, T(-3))
+    elseif 1 < q <= 2
+        q₂ = T(2) - q
+        value = αD * T(1//4) * q₂ * q₂ * q₂
+        dWdq = αD * T(-3//4) * q₂ * q₂
+    else
+        value = dWdq = zero(T)
+    end
+    return value, dWdq * h⁻¹ * xᵢⱼ / (norm(xᵢⱼ) + η²)
+end
+
+@inline kernel_value_and_gradient(kernel, q, xᵢⱼ) = (Wᵢⱼ(kernel, q), ∇Wᵢⱼ(kernel, q, xᵢⱼ))
+
 #---------------------------------------------------------------
 # Tensile Corrections for specific kernels
 #---------------------------------------------------------------
