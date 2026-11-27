@@ -4652,6 +4652,10 @@ julia --project=gpu_version -L gpu_version/test/cell_subdivision_benchmark.jl gp
 
 ## Benchmarks
 
+The [GPU performance roadmap](docs/gpu_performance_roadmap.md) lists 100
+experiments, with starting points for Duckling, DamBreak, StillWedge, and
+MovingSquare.
+
 ```bash
 # CPU (use -t N,0 on Julia 1.12: `-t auto` adds an interactive thread which the
 # CPU code does not account for and crashes)
