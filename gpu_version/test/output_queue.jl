@@ -12,7 +12,7 @@ function frame_prototype(D, T; n = 16, auxiliaries = true)
         omega = zeros(T, 2)) : nothing
     return DRIVER.OutputDownload{D}([:Position, :Density], buffers,
         auxiliaries ? zeros(Int32, n) : Int32[], ghost_index, floating,
-        CUDA.HostMemory[], CuEvent(CUDA.EVENT_DISABLE_TIMING))
+        CUDA.HostMemory[], CuEvent(CUDA.EVENT_DISABLE_TIMING), UInt(0), nothing)
 end
 
 @testset "output frames allocate on demand and reuse returned storage" begin

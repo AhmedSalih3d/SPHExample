@@ -1572,6 +1572,14 @@ this traversal and accepts `short_row_bit_walk = false` for comparisons.
 Every lane visits the same indices in increasing order, and each pair still
 uses the live cutoff. Rows longer than 32 candidates use the ordinary stride.
 
+Reusing unchanged output fields reduced the staged device-to-host payload
+from 46.01 MB to 34.08 MB (25.9%) across 400 GPU frames in the four-second
+StillWedge run on an RTX A1000 Laptop GPU. The CUDA profiler counted 2,800
+copies before and 1,224 after. With the short-row walk enabled in both
+variants, warm elapsed time was 1.4% lower at the median of 21 alternating
+pairs. Final particle state and the saved particle and grid datasets matched
+exactly.
+
 The [occupied-grid reuse proposal](benchmark/still_wedge_grid_reuse.md)
 describes how the output writer could reuse the grid mesh when consecutive
 frames occupy the same cells.
@@ -3204,6 +3212,13 @@ the standard *gather* formulation:
   in `SimParticles`). In multi-file mode, the collector copies completed
   downloads into a reusable host frame queue (`GPUOutputQueueBytes`, allocated
   on demand and reused) and immediately returns the staging buffers.
+  In uniform-grid runs where particle metadata changes only on a cell-list
+  rebuild, a field mask lets each staging buffer reuse its `ID`, `Type`,
+  `GroupMarker` and cell ID data until the next rebuild. Positions and
+  other live fields still download for every frame; the exported grid still
+  comes from the frame's current positions. Fixed-grid, open-boundary,
+  DualSPHysics-style stepping and runs with device-state sampling or density
+  observers retain full frame downloads.
   Progress log lines are emitted and flushed at each output interval, independently
   of queued frame writes. A separate task writes queued frames to disk in order,
   so HDF5 writes do not

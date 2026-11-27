@@ -404,5 +404,42 @@ if CUDA.functional()
                 CELL_DRIVER.free!(download)
             end
         end
+
+        @testset "output slots refresh sorted metadata at each rebuild" begin
+            (; host, gpu, ws) = cell_rebuild_fixture(Val(2), Float32, Float64)
+            fields = (:Density, :ID, :Type, :GroupMarker)
+            slots = [CELL_DRIVER.OutputDownload(gpu, fields; cells = true) for _ in 1:2]
+            try
+                grid = CELL_DRIVER.rebuild_cell_list!(gpu, ws, 10f0)
+                function check_frame(slot)
+                    CELL_DRIVER.enqueue_download!(slot, gpu; rebuild_count = ws.nrebuilds)
+                    CELL_DRIVER.finish_download!(slot, host, grid)
+                    for f in (:Position, fields...)
+                        @test getproperty(host, f) == Array(getproperty(gpu, f))
+                    end
+                    @test host.Cells == CartesianIndex.([CELL_GRID.global_coords(grid, c) for c in Array(gpu.CellID)])
+                end
+                check_frame(slots[1])
+                old_ids = copy(host.ID)
+                old_cells = Array(gpu.CellID)
+                gpu.Density .+= 1f0
+                check_frame(slots[1])
+                check_frame(slots[2])
+
+                moved = -2 .* Array(gpu.Position)
+                copyto!(gpu.Position, moved)
+                grid = CELL_DRIVER.rebuild_cell_list!(gpu, ws, 10f0)
+                @test Array(gpu.ID) != old_ids
+                @test Array(gpu.CellID) != old_cells
+                foreach(check_frame, slots)
+
+                fill!(gpu.Type, Frozen)
+                CELL_DRIVER.enqueue_download!(slots[1], gpu)
+                CELL_DRIVER.finish_download!(slots[1], host, grid)
+                @test all(==(Frozen), host.Type)
+            finally
+                foreach(CELL_DRIVER.free!, slots)
+            end
+        end
     end
 end

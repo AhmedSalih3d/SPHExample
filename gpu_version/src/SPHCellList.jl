@@ -345,7 +345,7 @@ Julia arrays are not registered as pinned memory: small arrays share memory
 pages with other objects and CUDA cannot register a page twice. The buffers
 are separate page-locked allocations; release them with `free!`.
 """
-struct OutputDownload{D}
+mutable struct OutputDownload{D}
     fields::Vector{Symbol}          # `Position` and the downloaded fields, in the order of `buffers`
     buffers::Vector{Vector}         # pinned staging buffer per field, in the device element type
     cid::Vector{Int32}              # pinned cell ids (empty unless the cells are exported)
@@ -353,10 +353,18 @@ struct OutputDownload{D}
     floating::Union{Nothing, NamedTuple} # body state captured with this particle frame
     memory::Vector{CUDA.HostMemory} # the page-locked allocations behind the buffers
     event::CuEvent                  # recorded behind the copies of the current frame
+    changing_fields::UInt           # one bit per field to refresh between rebuilds
+    rebuild_count::Union{Nothing, Int}
 end
 
 function OutputDownload(gpu::GPUParticles{D}, fields; cells::Bool, floating = nothing) where {D}
+    names = Symbol[:Position, fields...]
+    length(names) <= 8 * sizeof(UInt) || throw(ArgumentError("Too many particle fields for the output download mask."))
     foreach(f -> require_particle_field(gpu, f), fields)
+    changing_fields = UInt(0)
+    for (i, f) in pairs(names)
+        f in (:ID, :Type, :GroupMarker) || (changing_fields |= UInt(1) << (i - 1))
+    end
     memory = CUDA.HostMemory[]
     function pinned(::Type{T}, n) where {T}
         n == 0 && return T[]
@@ -364,7 +372,6 @@ function OutputDownload(gpu::GPUParticles{D}, fields; cells::Bool, floating = no
         push!(memory, mem)
         return unsafe_wrap(Array, convert(Ptr{T}, mem), n)
     end
-    names   = Symbol[:Position, fields...]
     buffers = Vector[pinned(eltype(getproperty(gpu, f)), length(getproperty(gpu, f))) for f in names]
     cid     = cells ? pinned(Int32, length(gpu)) : Int32[]
     ghost_index = gpu.BoundarySlot !== nothing && any(f -> f in (:GhostPoints, :GhostNormals), fields) ?
@@ -382,7 +389,8 @@ function OutputDownload(gpu::GPUParticles{D}, fields; cells::Bool, floating = no
             pinned(eltype(src), length(src))
         end)
     end
-    return OutputDownload{D}(names, buffers, cid, ghost_index, body_state, memory, CuEvent(CUDA.EVENT_DISABLE_TIMING))
+    return OutputDownload{D}(names, buffers, cid, ghost_index, body_state, memory,
+        CuEvent(CUDA.EVENT_DISABLE_TIMING), changing_fields, nothing)
 end
 
 # Asynchronous device to host copy into page-locked memory on the current stream.
@@ -393,20 +401,31 @@ function copy_async!(dst::Vector{T}, src::CuVector{T}) where {T}
 end
 
 """
-    enqueue_download!(download, gpu; floating = nothing)
+    enqueue_download!(download, gpu; floating = nothing, rebuild_count = nothing)
 
 Enqueue the asynchronous copies of the current device state into the staging
 buffers and record the event behind them, including floating-body state when
 the download was allocated with `floating`. Returns at once; the copies complete
 in stream order, before any kernel enqueued afterwards runs.
+
+Pass the current cell-list rebuild count only when the particle IDs, types,
+group markers and cell IDs cannot change between rebuilds. After the first
+download for that count, the same staging slot reuses those fields. The
+default downloads every field.
 """
-function enqueue_download!(dl::OutputDownload, gpu::GPUParticles; floating = nothing)
+function enqueue_download!(dl::OutputDownload, gpu::GPUParticles; floating = nothing,
+                           rebuild_count::Union{Nothing, Int} = nothing)
     dl.floating !== nothing && floating === nothing &&
         throw(ArgumentError("This output frame requires floating-body state when enqueuing its download."))
-    for (f, buf) in zip(dl.fields, dl.buffers)
-        copy_async!(buf, getproperty(gpu, f))
+    reuse_order = rebuild_count !== nothing && dl.rebuild_count === rebuild_count
+    dl.rebuild_count = nothing
+    pending = reuse_order ? dl.changing_fields : (UInt(1) << length(dl.fields)) - UInt(1)
+    while !iszero(pending)
+        i = trailing_zeros(pending) + 1
+        copy_async!(dl.buffers[i], getproperty(gpu, dl.fields[i]))
+        pending &= pending - UInt(1)
     end
-    isempty(dl.cid) || copy_async!(dl.cid, gpu.CellID)
+    reuse_order || isempty(dl.cid) || copy_async!(dl.cid, gpu.CellID)
     dl.ghost_index === nothing || copy_async!(dl.ghost_index, gpu.GhostIndex)
     if dl.floating !== nothing
         for (name, buf) in pairs(dl.floating)
@@ -414,6 +433,7 @@ function enqueue_download!(dl::OutputDownload, gpu::GPUParticles; floating = not
         end
     end
     CUDA.record(dl.event)
+    dl.rebuild_count = rebuild_count
     return dl
 end
 
@@ -431,7 +451,7 @@ function host_output_frame(prototype::OutputDownload{D}; fields = nothing) where
     return OutputDownload{D}(prototype.fields, buffers, similar(prototype.cid),
         need_ghosts ? similar(prototype.ghost_index) : nothing,
         prototype.floating === nothing ? nothing : map(similar, prototype.floating),
-        CUDA.HostMemory[], prototype.event)
+        CUDA.HostMemory[], prototype.event, UInt(0), nothing)
 end
 
 # Only the collector acquires frames and updates `allocated`; the writer returns
@@ -2579,6 +2599,11 @@ function RunSimulation(;SimGeometry::Vector{SPHGeometry{Dimensions, FloatType}},
     free    = Channel{OutputDownload{Dimensions}}(length(staging))
     jobs    = Channel{OutputFrameJob{Dimensions}}(length(staging))
     foreach(dl -> put!(free, dl), staging)
+    # These modes can change particle types or expose device arrays between rebuilds.
+    reuse_output_order = !cl.fixed_grid && open_boundary === nothing &&
+        !(SimTimeStepping isa DualSPHysicsSymplectic) && SimStateSampling === nothing && SimDensityObserver === nothing
+    enqueue_frame!(dl) = enqueue_download!(dl, gpu; floating,
+        rebuild_count = reuse_output_order ? cl.nrebuilds : nothing)
     # Queue each next batch of steps before waiting for the current one when
     # the device makes every timestep and output decision of a batch. Sampled
     # or clipped schedules, timestep diagnostics, stage observers, synchronized
@@ -2591,7 +2616,7 @@ function RunSimulation(;SimGeometry::Vector{SPHGeometry{Dimensions, FloatType}},
             SimDensityObserver === nothing && !(SimTimeStepping isa DualSPHysicsSymplectic) &&
             open_boundary === nothing && !floating.active && cl.periodicity === nothing &&
             sup.PeriodicImages === nothing
-        OutputPipeline(state, () -> take!(free), dl -> enqueue_download!(dl, gpu; floating), dl -> put!(free, dl))
+        OutputPipeline(state, () -> take!(free), enqueue_frame!, dl -> put!(free, dl))
     else
         nothing
     end
@@ -2838,7 +2863,7 @@ function RunSimulation(;SimGeometry::Vector{SPHGeometry{Dimensions, FloatType}},
                     queued
                 else
                     staged = @timeit HourGlass "13a Wait For Staging Buffers" take!(free)
-                    enqueue_download!(staged, gpu; floating)
+                    enqueue_frame!(staged)
                 end
                 job = OutputFrameJob{Dimensions}(dl, counter, Float64(t_out), grid)
                 if SimMetaData.GPUAsyncOutput
