@@ -3733,6 +3733,11 @@ accepted neighbor. `example/FloatingCylinder2d.jl` enables this option. With mix
 precision, cell-relative positions are already stored per particle; by default
 (`GPUCacheInteractionFields = false`), both inverse density and pressure are
 computed on demand from density.
+Within each accepted pair, continuity, density-budget diagnostics, divergence
+cleaning, and applicable shifting terms share the neighbor volume. The gather
+forms it from the neighbor's interaction mass and the evaluated stage's
+reciprocal density, including mDBC wall updates. Reuse is local to the gather,
+so there is no volume buffer to load or refresh between stages.
 The cache uses one dense vector for `InvDensity` and one for `Pressure` in
 `GPUSupportArrays`, shared between the full and predictor states unless gather/predictor
 fusion is active. Both are

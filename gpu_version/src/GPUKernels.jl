@@ -511,6 +511,7 @@ function interaction_kernel!(dρdtI, Acceleration, Kernel, KernelGradient, ∇C�
                         ρⱼ   = Density[j]
                         mass_j = interaction_particle_mass(interaction_mass,j,m₀)
                         ρⱼ⁻¹ = interaction_inverse_density(InvDensity, j, ρⱼ)
+                        volume_j = mass_j * ρⱼ⁻¹
                         vⱼ   = boundary_velocity(boundary_data, Velocity, ParticleType, j, slotⱼ)
                         vᵢⱼ  = vᵢ - vⱼ
                         if viscous_dt !== nothing
@@ -521,7 +522,6 @@ function interaction_kernel!(dρdtI, Acceleration, Kernel, KernelGradient, ∇C�
                         end
                         density_symmetric_term = Radial ? radial_factor * dot(vᵢⱼ, xᵢⱼ) : dot(vᵢⱼ, ∇ᵢWᵢⱼ)
                         if cleaning !== nothing && typeᵢ == Fluid
-                            volume_j = mass_j * ρⱼ⁻¹
                             # Keep this divergence separate from density diffusion.
                             divergence_sum += volume_j * density_symmetric_term
                             psi_j = cleaning_psi(cleaning,j,ParticleType[j],T)
@@ -530,10 +530,10 @@ function interaction_kernel!(dρdtI, Acceleration, Kernel, KernelGradient, ∇C�
                         # DBC walls take density from the fluid, not other walls.
                         wall_pair = wallᵢ && is_wall(ParticleType[j])
                         if !wall_pair
-                            dρdt += viscous_dt === nothing ? ρᵢ * (mass_j * ρⱼ⁻¹) * density_symmetric_term :
+                            contribution = ρᵢ * volume_j * density_symmetric_term
+                            dρdt += viscous_dt === nothing ? contribution :
                                 mass_j * density_symmetric_term * (ρᵢ / ρⱼ)
                             if density_budget !== nothing
-                                contribution = ρᵢ * (mass_j * ρⱼ⁻¹) * density_symmetric_term
                                 continuity_budget += contribution
                                 absolute_budget += abs(contribution)
                             end
@@ -656,14 +656,14 @@ function interaction_kernel!(dρdtI, Acceleration, Kernel, KernelGradient, ∇C�
 
                         if is_planar_shifting(Val(FlagShift))
                             if typeᵢ == Fluid
-                                ∇C += (mass_j * ρⱼ⁻¹) * ∇ᵢWᵢⱼ
+                                ∇C += volume_j * ∇ᵢWᵢⱼ
                             end
                         elseif FlagShift === true
                             MLcond = MLᵢ * MotionLimiterValue(T, ParticleType[j])
                             ∇C += (mass_j * ρᵢ⁻¹) * ∇ᵢWᵢⱼ
                             # Sign convention follows the CPU code, see
                             # https://arxiv.org/abs/2110.10076
-                            ∇r += (mass_j * ρⱼ⁻¹) * dot(-xᵢⱼ, ∇ᵢWᵢⱼ) * MLcond
+                            ∇r += volume_j * dot(-xᵢⱼ, ∇ᵢWᵢⱼ) * MLcond
                         end
                     end
                 end
