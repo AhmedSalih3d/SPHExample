@@ -11,6 +11,27 @@ function metadata(D, T; GPUPreloadInteractionTypes = false, kwargs...)
         VisualizeInParaview = false, OpenLogFile = false, GPUPreloadInteractionTypes = GPUPreloadInteractionTypes; kwargs...)
 end
 
+@testset "mDBC launch configuration is independent of the force gather" begin
+    meta = SimulationMetaData{2,Float32,NoShifting,NoKernelOutput,SimpleMDBC}(
+        SimulationName = "MDBCLaunchShape", SaveLocation = tempdir(), GPUInteractionThreads = 256, GPULanesPerParticle = 4)
+    kernel = SPHKernelInstance{2,Float32}(WendlandC2(); dx = 0.02f0)
+    resolve() = effective_configuration(meta, kernel, ZeroDensityDiffusion(), ZeroViscosity(); particle_count = 8)
+    @test resolve().effective.mdbc_threads == 256
+    @test resolve().effective.mdbc_lanes_per_ghost == 4
+    meta.GPUMDBCThreads = 64
+    meta.GPUMDBCLanesPerGhost = 8
+    cfg = resolve()
+    @test cfg.effective.interaction_threads == 256
+    @test cfg.effective.lanes_per_particle == 4
+    @test cfg.requested.mdbc_threads == cfg.effective.mdbc_threads == 64
+    @test cfg.requested.mdbc_lanes_per_ghost == cfg.effective.mdbc_lanes_per_ghost == 8
+    meta.GPUMDBCThreads = 65
+    @test_throws ArgumentError resolve()
+    meta.GPUMDBCThreads = 64
+    meta.GPUMDBCLanesPerGhost = 3
+    @test_throws ArgumentError resolve()
+end
+
 @testset "effective numerical configuration and capabilities" begin
     for D in (2, 3), T in (Float32, Float64)
         meta = metadata(D, T; GPURadialInteractions = true, GPUScalarSPSViscosity = true,

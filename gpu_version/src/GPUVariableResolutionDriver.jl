@@ -248,16 +248,18 @@ end
 function resident_force_stage!(domain, step; density_diffusion=LinearDensityDiffusion(),viscosity=ArtificialViscosity(),scheme=DualSPHysicsSymplectic(),
         correct_boundary=true,compute_shifting=false,include_gravity=Val(false),half=false,interaction=(;))
     p,s,c,k = domain.particles,domain.support,domain.cells,domain.kernel
+    mdbc = get(interaction, :mdbc, (;))
+    force = get(interaction, :force, (;))
     launch_pos_cells!(s.PosCells,p.Position,p.CellID,c.grid_dev,step,k)
     if domain.boundary_mode isa UpdatedMDBC
         f = domain.attachment === nothing ? nothing : domain.attachment.floating
         floating = SPHCellList.floating_mdbc_state((;gpu=p,floating=f),half)
         GPUKernels.launch_updated_mdbc!(p.Density,p.Position,p.Velocity,p.GhostPoints,p.GhostNormals,
             p.GhostIndex,p.Type,c.CellStart,c.grid_dev,step,k,domain.constants,s.boundary_data;
-            pos_cells=s.PosCells,floating_state=floating)
+            pos_cells=s.PosCells,floating_state=floating,mdbc...)
     elseif correct_boundary && !(domain.boundary_mode isa NoMDBC)
         launch_mdbc!(p.Density,p.Position,p.GhostPoints,p.GhostIndex,p.Type,c.CellStart,c.grid_dev,step,k,domain.constants;
-            pos_cells=s.PosCells)
+            pos_cells=s.PosCells,mdbc...)
     end
     launch_interactions!(s.dρdtI,p.Acceleration,p.Kernel,p.KernelGradient,s.∇Cᵢ,s.∇◌rᵢ,
         p.Position,p.Density,p.Velocity,p.Type,c.CellStart,p.CellID,c.grid_dev,step,
@@ -265,7 +267,7 @@ function resident_force_stage!(domain, step; density_diffusion=LinearDensityDiff
         boundary_forces=Val(domain.boundary_mode isa UpdatedMDBC),pos_cells=s.PosCells,boundary_data=s.boundary_data,
         pair_signal=scheme isa DualSPHysicsSymplectic ? nothing : s.PairSignal,
         viscous_dt=scheme isa DualSPHysicsSymplectic ? s.dual_state.viscous : nothing,
-        include_gravity,fastmath=false,interaction...)
+        include_gravity,fastmath=false,force...)
     scheme isa DualSPHysicsSymplectic || return nothing
     r = s.dual_state.reduction
     @cuda threads=REDUCE_THREADS blocks=r.nblocks resolution_criteria_kernel!(r.partial,p.Velocity,p.Acceleration,p.Type,

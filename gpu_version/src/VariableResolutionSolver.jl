@@ -7,7 +7,7 @@ using ..SimulationMetaDataConfiguration: SimulationMetaData, NoShifting, PlanarS
 using ..SPHCellList: run_variable_resolution
 import ..SPHCellList
 using ..SimulationResults: SimulationResult
-using ..GPUConfiguration: effective_configuration, configuration_snapshot, log_effective_configuration
+using ..GPUConfiguration: effective_configuration, configuration_snapshot, log_effective_configuration, mdbc_launch_shape
 using ..DampingZones: prepare_damping
 using ..ProduceHDFVTK: SetupVTKOutput
 using ..SPHMeasurements: has_measurements
@@ -201,7 +201,9 @@ function SPHCellList.run_variable_resolution(; SimGeometry,SimMetaData,SimConsta
     initial_time,initial_steps = meta.TotalTime,meta.Iteration
     batch_steps = meta.GPUSyncTimers ? 1 : clamp(meta.GPUMaxStepsPerSync,1,256)
     use_graphs = meta.GPUUseGraph && !meta.GPUSyncTimers
-    interaction = (;threads=meta.GPUInteractionThreads,always_inline=meta.GPUInteractionAlwaysInline)
+    mdbc = mdbc_launch_shape(meta, 1)
+    interaction = (; force = (; threads = meta.GPUInteractionThreads, always_inline = meta.GPUInteractionAlwaysInline),
+        mdbc = (; threads = mdbc.threads, lanes = Val(mdbc.lanes)))
     density_diffusion = SimDensityDiffusion
     viscosity = SimViscosity
     scheme = SimTimeStepping

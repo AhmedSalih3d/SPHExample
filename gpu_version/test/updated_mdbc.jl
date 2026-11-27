@@ -180,9 +180,16 @@ if CUDA.functional()
             f = updated_mdbc_fixture(Val(2), Float32, Float64)
             f.metadata.GPUUseGraph = graph
             f.metadata.GPUCacheInteractionFields = cache
-            RunSimulation(SimGeometry = f.geometry, SimMetaData = f.metadata, SimConstants = f.constants,
+            f.metadata.GPULanesPerParticle = 1
+            f.metadata.GPUMDBCThreads = 64
+            f.metadata.GPUMDBCLanesPerGhost = 4
+            result = RunSimulation(SimGeometry = f.geometry, SimMetaData = f.metadata, SimConstants = f.constants,
                 SimKernel = f.kernel, SimParticles = f.host, SimLogger = SimulationLogger(f.metadata.SaveLocation),
                 SimViscosity = Laminar(), SimDensityDiffusion = ZeroDensityDiffusion(), SimTimeStepping = scheme)
+            @test result.configuration.effective.mdbc_threads == 64
+            @test result.configuration.effective.mdbc_lanes_per_ghost == 4
+            @test result.configuration.effective.lanes_per_particle == 1
+            @test result.configuration.execution.path === (graph ? :cuda_graph : :direct)
             wall = findfirst(==(Fixed), f.host.Type)
             @test all(isfinite, f.host.Density)
             @test f.host.Density[wall] < 1000

@@ -3118,6 +3118,12 @@ the standard *gather* formulation:
   on the small cases is worth doing. Rule of thumb: large cases run with 1
   lane and `GPUCellSubdivision = 2`; small cases keep both defaults unless
   measured otherwise.
+* **mDBC launch shape.** Run `julia --project=. benchmark/tune_mdbc.jl --quick`
+  from `gpu_version` to compare mDBC block sizes and lanes per ghost on the
+  2D still wedge and 3D duckling cases. Omit `--quick` for the full sweep,
+  add `--float64` for double precision, or pass case name substrings. The
+  sweep holds the force shape fixed and reports paired whole-run timings,
+  work counts and final particle-state differences.
 * **Finer cells need measurement, not a lower rejection rate alone.** The
   existing grid also supports `GPUCellSubdivision = 3, 4, ...`; cells have
   edge `H/R`, with `(2R+1)^(D-1)` contiguous row ranges. The traversal
@@ -3560,7 +3566,9 @@ weighting with its own free-surface scaling and accepts the bare
 | `GPUPeriodicImages` | `true` | Dense periodic sources for supported DBC runs. `false` selects legacy translated queries. mDBC and short periods retain queries automatically; nonperiodic runs allocate no copies. The legacy selection is intended for future deprecation after compatibility and trajectory validation. |
 | `GPUFixedGrid` | `false` | Retain the initial particle-grid bounds. Particles crossing locked sides freeze and are logged at rebuilds; allowed sides grow without shrinking. See "Fixed grid and directional expansion". |
 | `GPUGridExpansion` | `((false, false), ...)` | One `(negative, positive)` Boolean pair per axis, selecting which sides of a fixed grid may expand. Requires `GPUFixedGrid = true`. |
-| `GPUInteractionThreads` | `128` | Threads per block of the interaction and mDBC kernels. |
+| `GPUInteractionThreads` | `128` | Threads per block of the force gather. Uniform mDBC inherits this value when `GPUMDBCThreads = 0`. |
+| `GPUMDBCThreads` | `0` | Threads per block for Simple mDBC and cloned-pressure ghost correction. Use a whole number of warps, up to 1024 threads, within the device kernel's resource limits. Zero inherits the force block size in uniform runs and uses 128 in variable-resolution runs. |
+| `GPUMDBCLanesPerGhost` | `0` | Lanes per ghost owner (1, 2, 4, 8, 16, or 32). Zero inherits the resolved force lanes in uniform runs and uses one lane in variable-resolution runs. Changing the lane count can change the order of floating-point sums in the ghost solve. |
 | `GPUShortRowBitWalk` | `false` | Enumerate interaction rows with at most 32 candidate indices using a lane bit set when the lane count divides 32. The uniform-grid solver supports this option outside DualSPHysics-style stepping. StillWedge enables it explicitly. |
 | `GPULanesPerParticle` | `0` (auto) | Warp lanes that share one particle's neighbour loop (1, 2, 4, ... 32). The automatic choice targets roughly one resident thread per particle-lane in 3D and one quarter of that in 2D, where neighborhoods generally contain fewer candidates; it caps lanes at 32 and combines them with warp shuffles. Explicit settings are unchanged. Use `1` for large cases and together with `GPUCellSubdivision = 2` (see "Lanes per particle" above). |
 | `GPUInteractionAlwaysInline` | `true` | Force helper-function inlining in the interaction kernel without requesting relaxed floating-point semantics. Independent of fast math; set to `false` to disable. Benchmark the intended model and GPU. |

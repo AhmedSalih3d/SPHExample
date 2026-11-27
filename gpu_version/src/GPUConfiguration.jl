@@ -11,6 +11,27 @@ using ..GPUKernels: choose_lanes, interaction_options
 
 export effective_configuration
 
+function mdbc_launch_shape(meta::SimulationMetaData{D,T,S,K,B}, force_lanes) where {D,T,S,K,B}
+    threads = meta.GPUMDBCThreads
+    lanes = meta.GPUMDBCLanesPerGhost
+    (threads == 0 || (32 <= threads <= 1024 && threads % 32 == 0)) ||
+        throw(ArgumentError("GPUMDBCThreads must be zero or a whole-warp block size from 32 to 1024"))
+    lanes in (0, 1, 2, 4, 8, 16, 32) ||
+        throw(ArgumentError("GPUMDBCLanesPerGhost must be zero or a power of two from 1 to 32"))
+    variable = meta.VariableResolution !== nothing
+    threads = threads == 0 ? (variable ? 128 : meta.GPUInteractionThreads) : threads
+    lanes = lanes == 0 ? (variable ? 1 : force_lanes) : lanes
+    if B === NoMDBC
+        return (; threads = nothing, lanes = nothing)
+    end
+    if meta.GPUMDBCThreads != 0 || meta.GPUMDBCLanesPerGhost != 0
+        lanes in (1, 2, 4, 8, 16, 32) && threads >= lanes && threads % lanes == 0 &&
+            (lanes == 1 || threads % 32 == 0) ||
+            throw(ArgumentError("The resolved mDBC block must fit whole ghost groups and use whole warps for multiple lanes"))
+    end
+    return (; threads, lanes)
+end
+
 """
     effective_configuration(metadata, kernel, diffusion, viscosity; particle_count)
 
@@ -45,6 +66,7 @@ function effective_configuration(meta::SimulationMetaData{D, T, S, K, B}, kernel
         preload_interaction_types = meta.GPUPreloadInteractionTypes,
         scalar_sps_viscosity = meta.GPUScalarSPSViscosity, use_graph = meta.GPUUseGraph,
         sync_timers = meta.GPUSyncTimers, lanes_per_particle = meta.GPULanesPerParticle,
+        mdbc_threads = meta.GPUMDBCThreads, mdbc_lanes_per_ghost = meta.GPUMDBCLanesPerGhost,
         short_row_bit_walk = meta.GPUShortRowBitWalk,
         max_steps_per_sync = meta.GPUMaxStepsPerSync, double_position = meta.GPUDoublePosition,
         cell_subdivision = meta.GPUCellSubdivision, x_cell_subdivision = meta.GPUXCellSubdivision,
@@ -52,6 +74,7 @@ function effective_configuration(meta::SimulationMetaData{D, T, S, K, B}, kernel
     capabilities = (; radial_interactions = options.radial_supported,
         scalar_sps_viscosity = options.scalar_sps_supported, preload_interaction_types = options.preload_types_supported)
     lanes = meta.VariableResolution !== nothing ? 1 : meta.GPULanesPerParticle <= 0 ? choose_lanes(particle_count, Val(D)) : meta.GPULanesPerParticle
+    mdbc = mdbc_launch_shape(meta, lanes)
     position_type = position_float_type(meta)
     effective = (; sph_kernel = typeof(kernel.kernel), kernel_regularization = kernel.η²,
         variable_resolution = meta.VariableResolution === nothing ? nothing :
@@ -100,6 +123,7 @@ function effective_configuration(meta::SimulationMetaData{D, T, S, K, B}, kernel
         boundary_forces = meta.GPUBoundaryForces, deterministic_sort = meta.GPUDeterministicSort,
         clip_timestep_to_output = meta.GPUClipTimeStepToOutput,
         interaction_threads = meta.GPUInteractionThreads, lanes_per_particle = lanes,
+        mdbc_threads = mdbc.threads, mdbc_lanes_per_ghost = mdbc.lanes,
         short_row_bit_walk = meta.GPUShortRowBitWalk && meta.VariableResolution === nothing &&
             !(meta.TimeSteppingMode isa DualSPHysicsSymplectic) && lanes <= 32 && 32 % lanes == 0,
         use_graph = meta.GPUUseGraph && !meta.GPUSyncTimers,

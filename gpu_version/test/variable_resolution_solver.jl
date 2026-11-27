@@ -269,7 +269,7 @@ if CUDA.functional()
     @testset "normal solver metadata, schedules, output and result" begin
         case = vresolution_dambreak_case(dx=0.05)
         direct = run_case(case;graphs=false)
-        graph = run_case(case;logging=true)
+        graph = run_case(case;logging=true,GPUMDBCThreads=64,GPUMDBCLanesPerGhost=1)
         @test direct.result isa SPHExampleGPU.SimulationResult
         @test graph.result.final_state.particles === graph.particles
         @test graph.result.final_state.complete
@@ -280,6 +280,10 @@ if CUDA.functional()
         @test direct.result.configuration.execution.path === :direct
         @test graph.result.configuration.effective.variable_resolution.method === :two_domain_mls
         @test graph.result.configuration.effective.density_diffusion_model === LinearDensityDiffusion
+        @test direct.result.configuration.effective.mdbc_threads == 128
+        @test graph.result.configuration.effective.mdbc_threads == 64
+        @test graph.result.configuration.effective.mdbc_lanes_per_ghost == 1
+        @test graph.result.configuration.effective.interaction_threads == 128
         @test !graph.result.configuration.effective.async_output
         @test !graph.result.configuration.effective.interaction_fastmath
         @test graph.result.configuration.effective.position_type === Float64

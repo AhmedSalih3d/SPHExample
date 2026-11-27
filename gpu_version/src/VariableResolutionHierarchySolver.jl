@@ -55,7 +55,9 @@ function run_nested_variable_resolution(;SimGeometry,SimMetaData,SimConstants,Si
     damping = prepare_damping(SimDamping,Val(2))
     scheme,density_diffusion,viscosity = SimTimeStepping,SimDensityDiffusion,SimViscosity
     boundary_mode = typeof(meta).parameters[5]()
-    interaction = (;threads=meta.GPUInteractionThreads,always_inline=meta.GPUInteractionAlwaysInline)
+    mdbc = mdbc_launch_shape(meta, 1)
+    interaction = (; force = (; threads = meta.GPUInteractionThreads, always_inline = meta.GPUInteractionAlwaysInline),
+        mdbc = (; threads = mdbc.threads, lanes = Val(mdbc.lanes)))
     batch_steps = meta.GPUSyncTimers ? 1 : clamp(meta.GPUMaxStepsPerSync,1,256)
     use_graphs = meta.GPUUseGraph && !meta.GPUSyncTimers
     initial_time,initial_steps = meta.TotalTime,meta.Iteration

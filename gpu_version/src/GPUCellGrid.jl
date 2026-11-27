@@ -329,7 +329,8 @@ end
 Lazy rows of a grid with reach `R >= 2`: `(2R+1)^(D-1)` rows in the same
 order as the tuples above (last coordinate outermost). A tuple would unroll
 the pair loop body 25 times in 3D, which costs instruction cache; this
-iterates with a counter instead.
+iterates with a counter and carries the linear offset forward by row/plane
+strides instead of recomputing it from each row coordinate.
 """
 struct CellRows{D, R}
     n1::Int32
@@ -341,10 +342,28 @@ Base.eltype(::Type{<:CellRows}) = CellRow
 @inline Base.iterate(r::CellRows) = iterate(r, Int32(0))
 @inline function Base.iterate(r::CellRows{D, R}, k::Int32) where {D, R}
     W = Int32(2R + 1)
-    k >= W^(D - 1) && return nothing
-    dy = D == 2 ? k - Int32(R) : k % W - Int32(R)
-    dz = D == 2 ? Int32(0)     : k ÷ W - Int32(R)
-    return CellRow(dy * r.n1 + dz * r.n12, dy, dz), k + Int32(1)
+    count = W^(D - 1)
+    k >= count && return nothing
+    dy = -Int32(R)
+    dz = D == 2 ? Int32(0) : -Int32(R)
+    off = dy * r.n1 + dz * r.n12
+    return CellRow(off, dy, dz), (Int32(1), dy, dz, off)
+end
+
+@inline function Base.iterate(r::CellRows{D, R},
+                              (k, dy, dz, off)::NTuple{4, Int32}) where {D, R}
+    W = Int32(2R + 1)
+    count = W^(D - 1)
+    k >= count && return nothing
+    if dy < Int32(R)
+        dy += Int32(1)
+        off += r.n1
+    elseif D == 3
+        dy = -Int32(R)
+        dz += Int32(1)
+        off += r.n12 - Int32(2R) * r.n1
+    end
+    return CellRow(off, dy, dz), (k + Int32(1), dy, dz, off)
 end
 
 @inline cell_rows(grid::CellGrid{D, R}) where {D, R} = CellRows{D, R}(grid.dims[1], grid.dims[1] * grid.dims[2])

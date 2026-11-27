@@ -339,7 +339,9 @@ mutable struct SimulationMetaData{Dimensions,
     GPUDeterministicSort::Bool   # sort particles inside each cell for bitwise reproducible runs
     GPUMaxCells::Int             # safety limit for the size of the neighbour grid
     GPUInteractionThreads::Int   # threads per block for the interaction kernels
-    GPULanesPerParticle::Int     # warp lanes per particle in the gather kernels (0 = automatic)
+    GPULanesPerParticle::Int     # warp lanes per particle in the force gather (0 = automatic)
+    GPUMDBCThreads::Int          # threads per mDBC block (0 = backend default)
+    GPUMDBCLanesPerGhost::Int    # warp lanes per ghost owner (0 = backend default)
     GPUShortRowBitWalk::Bool     # enumerate short interaction rows using lane bit sets
     GPUInteractionAlwaysInline::Bool # force inlining only in the interaction kernel
     GPUInteractionFastMath::Bool # relaxed arithmetic only in the interaction kernel
@@ -471,6 +473,8 @@ function SimulationMetaData{Dimensions, FloatType, SMode, KMode, BMode, LMode}(;
         GPUMaxCells::Int                        = 50_000_000,
         GPUInteractionThreads::Int              = 128,
         GPULanesPerParticle::Int                = 0,
+        GPUMDBCThreads::Int                      = 0,
+        GPUMDBCLanesPerGhost::Int                = 0,
         GPUShortRowBitWalk::Bool                = false,
         GPUInteractionAlwaysInline::Bool        = true,
         GPUInteractionFastMath::Bool            = true,
@@ -514,7 +518,8 @@ function SimulationMetaData{Dimensions, FloatType, SMode, KMode, BMode, LMode}(;
         FloatType(CurrentTimeStep), Float64(TotalTime), Float64(SimulationTime),
         IndexCounter, VisualizeInParaview, ExportSingleVTKHDF, ExportGridCells,
         OutputVariables, OpenLogFile, TimeSteppingMode, VariableResolution,
-        GPUSyncTimers, GPUDeterministicSort, GPUMaxCells, GPUInteractionThreads, GPULanesPerParticle, GPUShortRowBitWalk,
+        GPUSyncTimers, GPUDeterministicSort, GPUMaxCells, GPUInteractionThreads, GPULanesPerParticle,
+        GPUMDBCThreads, GPUMDBCLanesPerGhost, GPUShortRowBitWalk,
         GPUInteractionAlwaysInline, GPUInteractionFastMath, GPURadialInteractions, GPUScalarSPSViscosity,
         GPUPreloadInteractionTypes,
         GPUBoundaryForces, GPUAsyncOutput, GPUMaxStepsPerSync, GPUUseGraph, GPUClipTimeStepToOutput,

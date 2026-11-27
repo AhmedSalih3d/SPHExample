@@ -1199,7 +1199,9 @@ function floating_mdbc_state(ctx, half::Bool)
 end
 
 function enqueue_boundary_correction!(ctx, step, half::Bool; prepared::Bool = false)
-    (; gpu, sup, cl, SimKernel, SimConstants, threads, lanes) = ctx
+    (; gpu, sup, cl, SimKernel, SimConstants) = ctx
+    threads = get(ctx, :mdbc_threads, ctx.threads)
+    lanes = get(ctx, :mdbc_lanes, ctx.lanes)
     density = half ? sup.ρₙ⁺ : gpu.Density
     position, velocity = half ? predictor_arrays(sup, gpu) : (gpu.Position, gpu.Velocity)
     pairs = half ? sup.PosCellsₙ⁺ : sup.PosCells
@@ -1882,6 +1884,7 @@ function SimulationLoop(SimDensityDiffusion::SDD, SimViscosity::SV, SimKernel,
     ctx = (; gpu, cl, sup, red, motion, floating, external_forces, damping, divergence_cleaning, rotation, open_boundary,state, SimKernel, SimConstants, SimDensityDiffusion,
              SimViscosity, FlagKernel, FlagShift, UseMDBC, SingleNeighbor, threads, lanes, bforces, radial, scalar_sps, preload_types,
              interaction_always_inline, interaction_fastmath, HourGlass, boundary_mode,
+             mdbc_threads = effective.mdbc_threads, mdbc_lanes = Val(effective.mdbc_lanes_per_ghost),
              short_row_bit_walk = Val(effective.short_row_bit_walk),
              frozen_particles = Val(open_boundary !== nothing || cl.frozen_total > 0), cache_final_state, fuse_predictor, diagnostics,
              periodic_cell_coordinates = SimMetaData.GPUPeriodicCellCoordinates,

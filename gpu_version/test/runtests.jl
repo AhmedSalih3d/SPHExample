@@ -535,6 +535,9 @@ relerr(a, b) = maximum(abs.(a .- b) ./ max.(abs.(b), eps(eltype(b))))
             l   = SPHExampleGPU.GPUCellGrid.local_coords(grid, lin)
             @test l .+ grid.origin == Int32.(c)
         end
+        counted_rows = SPHExampleGPU.GPUCellGrid.CellRows{2, 1}(
+            grid.dims[1], grid.dims[1] * grid.dims[2])
+        @test collect(counted_rows) == collect(cell_rows(grid))
         g1 = CellGrid{3}((Int32(0), Int32(0), Int32(0)), (Int32(10), Int32(8), Int32(6)), Int32(480))
         @test SPHExampleGPU.GPUCellGrid.row_offsets(g1) == (-90, -80, -70, -10, 0, 10, 70, 80, 90)
         rows = cell_rows(g1)
@@ -544,6 +547,9 @@ relerr(a, b) = maximum(abs.(a .- b) ./ max.(abs.(b), eps(eltype(b))))
         @test [r.dz for r in rows] == [-1, -1, -1, 0, 0, 0, 1, 1, 1]
         @test all(r.off == r.dy * 10 + r.dz * 80 for r in rows)
         @test all(r.dz == 0 for r in cell_rows(grid))
+        counted_rows = SPHExampleGPU.GPUCellGrid.CellRows{3, 1}(
+            g1.dims[1], g1.dims[1] * g1.dims[2])
+        @test collect(counted_rows) == collect(rows)
         CellStart = Int32.(0:10:1000)
         @test SPHExampleGPU.GPUCellGrid.row_range(g1, CellStart, Int32(50), Int32(0)) == (CellStart[49] + 1, CellStart[52])
         @test SPHExampleGPU.GPUCellGrid.row_range(g1, CellStart, Int32(50), rows[5]) == (CellStart[49] + 1, CellStart[52])
