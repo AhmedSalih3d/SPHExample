@@ -3,17 +3,20 @@ using SPHExampleGPU, CUDA, HDF5, SHA, Statistics, Printf, TimerOutputs, LinearAl
 const SOURCE_DIR = normpath(joinpath(@__DIR__, "..", "src"))
 const EXAMPLE_PATH = normpath(joinpath(@__DIR__, "..", "example", "StillWedgeMDBC.jl"))
 
-function checked_driver(; propagate = false, kernel_transform = identity, prefix = "CheckedRadial")
+function checked_driver(; propagate = false, kernel_transform = identity, driver_transform = identity,
+                        prefix = "CheckedRadial", source_revision = nothing)
     names = Dict(name => prefix * name for name in
         ("SPHDensityDiffusionModels", "GPUKernels", "GPUConfiguration", "SPHCellList"))
     function source(file)
-        text = read(joinpath(SOURCE_DIR, file), String)
+        text = source_revision === nothing ? read(joinpath(SOURCE_DIR, file), String) :
+            read(`git -C $SOURCE_DIR show $(source_revision * ":gpu_version/src/" * file)`, String)
         return replace(text, r"include\(\"([^\"]+)\"\)" =>
             m -> source(match(r"\"([^\"]+)\"", m)[1]))
     end
     for name in ("SPHDensityDiffusionModels", "GPUKernels", "GPUConfiguration", "SPHCellList")
         text = source(name * ".jl")
         name == "GPUKernels" && (text = kernel_transform(text))
+        name == "SPHCellList" && (text = driver_transform(text))
         if name == "SPHDensityDiffusionModels" && !propagate
             needle = "Base.@propagate_inbounds function radial_density_diffusion(model::Union{LinearDensityDiffusion, ZeroGravityLinearDensityDiffusion}"
             occursin(needle, text) || error("optimized annotation not found")
@@ -30,7 +33,7 @@ function checked_driver(; propagate = false, kernel_transform = identity, prefix
         kernels = Base.invokelatest(getproperty, SPHExampleGPU, Symbol(names["GPUKernels"])))
 end
 
-function example_runner(variant)
+function example_runner(variant; example_transform = identity)
     scope = Module(gensym(:WedgeRun))
     Core.eval(scope, :(include(path) = Base.include($scope, path)))
     Core.eval(scope, quote
@@ -44,7 +47,7 @@ function example_runner(variant)
     end)
     text = read(EXAMPLE_PATH, String)
     text = replace(text, r"\r?\n# Including this file starts the simulation\.[\s\S]*\z" => "\n")
-    Base.include_string(scope, text, EXAMPLE_PATH)
+    Base.include_string(scope, example_transform(text), EXAMPLE_PATH)
     return Base.invokelatest(getproperty, scope, :run_still_wedge)
 end
 
@@ -70,14 +73,15 @@ function fingerprint(save)
     return result
 end
 
-function measure(run, duration)
+function measure(run, duration; short_row_bit_walk = false)
     mktempdir() do save
         result = nothing
+        traversal = short_row_bit_walk === nothing ? (;) : (; short_row_bit_walk)
         GC.gc(); CUDA.synchronize()
         seconds = redirect_stdout(devnull) do
             @elapsed begin
                 result = Base.invokelatest(run; simulation_time = duration, save_location = save,
-                    visualize = false, open_log_file = false, generate_pdf_report = false)
+                    visualize = false, open_log_file = false, generate_pdf_report = false, traversal...)
                 CUDA.synchronize()
             end
         end
@@ -89,7 +93,9 @@ function measure(run, duration)
         work = (; steps = meta.Iteration,
             rebuilds = TimerOutputs.ncalls(loop["02a Actual Calculate IndexCounter"]),
             readbacks = TimerOutputs.ncalls(loop["13 Read Back State"]))
-        return (; seconds, time = meta.TotalTime, work, state, initial = result.initial, output = fingerprint(save))
+        return (; seconds, time = meta.TotalTime, work, state, initial = result.initial,
+            output = fingerprint(save), execution = result.result.configuration.execution,
+            effective = result.result.configuration.effective)
     end
 end
 
@@ -102,6 +108,15 @@ function compare(a, b)
         error("comparison differs: time=$(a.time), $(b.time); work=$(a.work), $(b.work); initial=$(map((x,y) -> count(p -> !isequal(p[1], p[2]), zip(x, y)), a.initial, b.initial)); state counts=$state_counts; max norms=$max_norms; HDF5 datasets differing=$output_diffs")
     end
     return nothing
+end
+
+function write_records(output, records)
+    open(output, "w") do io
+        println(io, join(keys(first(records)), ','))
+        for row in records
+            println(io, join(values(row), ','))
+        end
+    end
 end
 
 function main(args)

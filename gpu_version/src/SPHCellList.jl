@@ -1151,6 +1151,7 @@ function launch_solver_interactions!(ctx,position,density,velocity,pairs,step;in
         periodic_cell_coordinates=periodic_coordinates,always_inline=get(ctx,:interaction_always_inline,true),
         fastmath=get(ctx,:interaction_fastmath,true),target_indices=targets,target_count=length(gpu),pair_order=order,
         native_rigid=Val(native_rigid),interaction_mass,predictor_output,pair_signal_precleared,
+        short_row_bit_walk=get(ctx, :short_row_bit_walk, Val(false)),
         cleaning=cleaning_fields(get(ctx,:divergence_cleaning,nothing),cleaning_half),pair_signal=collect_pair_signal ? get(ctx,:pair_signal,sup.PairSignal) : nothing)
     observe_density_stage!(get(ctx, :density_observer, nothing), cleaning_half ? :corrector_rate : :predictor_rate, ctx, step)
     return nothing
@@ -1860,6 +1861,7 @@ function SimulationLoop(SimDensityDiffusion::SDD, SimViscosity::SV, SimKernel,
     ctx = (; gpu, cl, sup, red, motion, floating, external_forces, damping, divergence_cleaning, rotation, open_boundary,state, SimKernel, SimConstants, SimDensityDiffusion,
              SimViscosity, FlagKernel, FlagShift, UseMDBC, SingleNeighbor, threads, lanes, bforces, radial, scalar_sps, preload_types,
              interaction_always_inline, interaction_fastmath, HourGlass, boundary_mode,
+             short_row_bit_walk = Val(effective.short_row_bit_walk),
              frozen_particles = Val(open_boundary !== nothing || cl.frozen_total > 0), cache_final_state, fuse_predictor, diagnostics,
              periodic_cell_coordinates = SimMetaData.GPUPeriodicCellCoordinates,
              logger = LMode === StoreLog ? logger : nothing,

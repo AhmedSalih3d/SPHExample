@@ -409,7 +409,8 @@ function interaction_kernel!(dρdtI, Acceleration, Kernel, KernelGradient, ∇C�
                              periodic_bounds = nothing, viscous_dt = nothing, ::Val{FastMath}=Val(false), target_indices=nothing, pair_order=nothing,
                              ::Val{NativeRigid}=Val(false), interaction_mass=nothing,
                              ::Val{PreloadTypes}=Val(false), ρ₀⁻¹ = inv(SimConstants.ρ₀), predictor_output = nothing,
-                             ::Val{FuseReferenceForces} = Val(false), cleaning = nothing, pair_signal = nothing, density_budget = nothing) where {D, T, FlagKernel, FlagShift, BoundaryForces, K, Radial, ScalarSPS, FrozenParticles, IncludeGravity, FastMath, NativeRigid, PreloadTypes, FuseReferenceForces}
+                             ::Val{FuseReferenceForces} = Val(false), cleaning = nothing, pair_signal = nothing, density_budget = nothing,
+                             ::Val{ShortRowBitWalk} = Val(false)) where {D, T, FlagKernel, FlagShift, BoundaryForces, K, Radial, ScalarSPS, FrozenParticles, IncludeGravity, FastMath, NativeRigid, PreloadTypes, FuseReferenceForces, ShortRowBitWalk}
     step_active(step) || return nothing
     grid = load_grid(gridarg)
     t    = thread_index()
@@ -476,7 +477,15 @@ function interaction_kernel!(dρdtI, Acceleration, Kernel, KernelGradient, ∇C�
             # when a corner stencil reaches a large dormant inlet reserve.
             jlo = FrozenParticles ? max(jlo, CellStart[Int32(2)] + Int32(1)) : jlo
             rowcell  = c + row.off
+            walk_bits = ShortRowBitWalk && K <= 32 && 32 % K == 0 && jhi - jlo < 32
+            pending = UInt32(0)
             j = jlo + lane
+            if walk_bits
+                # Set every Kth bit for this lane. A zero mask yields offset 32,
+                # beyond the end of a short row. Wider rows use the index stride.
+                pending = (typemax(UInt32) ÷ ((UInt32(1) << K) - UInt32(1))) << lane
+                j = jlo + Int32(trailing_zeros(pending))
+            end
             while j <= jhi
                 if j != source_i && (!FrozenParticles || ParticleType[j] != Frozen)
                     xᵢⱼ  = pair_vector(Pairs, pᵢ, j, rowcell, row, s)
@@ -658,7 +667,12 @@ function interaction_kernel!(dρdtI, Acceleration, Kernel, KernelGradient, ∇C�
                         end
                     end
                 end
-                j += Int32(K)
+                if walk_bits
+                    pending &= pending - UInt32(1)
+                    j = jlo + Int32(trailing_zeros(pending))
+                else
+                    j += Int32(K)
+                end
             end
         end
     end
@@ -803,7 +817,7 @@ function launch_interactions!(dρdtI, Acceleration, Kernel, KernelGradient, ∇C
                               target_indices = nothing, target_count::Integer = length(Position), pair_order = nothing,
                               native_rigid::Val = Val(false), interaction_mass = nothing, predictor_output = nothing,
                               cleaning = nothing, pair_signal = nothing, density_budget = nothing,
-                              pair_signal_precleared::Bool = false)
+                              pair_signal_precleared::Bool = false, short_row_bit_walk::Val = Val(false))
     density_budget === nothing || (
         lanes isa Val{1} && radial isa Val{false} && viscous_dt === nothing &&
         SimDensityDiffusion isa Union{ZeroDensityDiffusion, ZeroGravityLinearDensityDiffusion, LinearDensityDiffusion} &&
@@ -870,7 +884,7 @@ function launch_interactions!(dρdtI, Acceleration, Kernel, KernelGradient, ∇C
         Pairs, Position, Density, Velocity, ParticleType, SimParticles,
         CellStart, CellID, grid, step,
         SimDensityDiffusion, SimViscosity, SimKernel, SimConstants,
-        FlagKernel, FlagShift, boundary_forces, lanes, boundary_data, inverse_density, pressure, Int32(n), use_radial, use_scalar_sps, frozen_particles, include_gravity, periodicity, periodic_bounds, viscous_dt, Val(fast_math), target_indices, pair_order, native_rigid, interaction_mass, Val(options.preload_types), inv(SimConstants.ρ₀), predictor_output, Val(fuse_reference_forces), cleaning, pair_signal, density_budget)
+        FlagKernel, FlagShift, boundary_forces, lanes, boundary_data, inverse_density, pressure, Int32(n), use_radial, use_scalar_sps, frozen_particles, include_gravity, periodicity, periodic_bounds, viscous_dt, Val(fast_math), target_indices, pair_order, native_rigid, interaction_mass, Val(options.preload_types), inv(SimConstants.ρ₀), predictor_output, Val(fuse_reference_forces), cleaning, pair_signal, density_budget, short_row_bit_walk)
     return nothing
 end
 

@@ -21,6 +21,7 @@ function run_still_wedge(;
     open_log_file::Bool = true,
     generate_pdf_report::Bool = GeneratePDFReport,
     legacy_timestep::Bool = false,
+    short_row_bit_walk::Bool = time_stepping isa SymplecticTimeStepping && !legacy_timestep,
 )
     Dimensions = 2
     FloatType = Float32
@@ -77,6 +78,7 @@ function run_still_wedge(;
         GPURadialInteractions = true,
         GPUCacheInteractionFields = true,
         GPUXCellSubdivision = 4,
+        GPUShortRowBitWalk = short_row_bit_walk,
         # This small case needs only a few queued frames to overlap disk output.
         GPUOutputQueueBytes = 8 * 1024^2,
         # OutputVariables = [

@@ -45,6 +45,7 @@ function effective_configuration(meta::SimulationMetaData{D, T, S, K, B}, kernel
         preload_interaction_types = meta.GPUPreloadInteractionTypes,
         scalar_sps_viscosity = meta.GPUScalarSPSViscosity, use_graph = meta.GPUUseGraph,
         sync_timers = meta.GPUSyncTimers, lanes_per_particle = meta.GPULanesPerParticle,
+        short_row_bit_walk = meta.GPUShortRowBitWalk,
         max_steps_per_sync = meta.GPUMaxStepsPerSync, double_position = meta.GPUDoublePosition,
         cell_subdivision = meta.GPUCellSubdivision, x_cell_subdivision = meta.GPUXCellSubdivision,
         periodic_cell_coordinates = meta.GPUPeriodicCellCoordinates, periodic_images=meta.GPUPeriodicImages)
@@ -99,6 +100,8 @@ function effective_configuration(meta::SimulationMetaData{D, T, S, K, B}, kernel
         boundary_forces = meta.GPUBoundaryForces, deterministic_sort = meta.GPUDeterministicSort,
         clip_timestep_to_output = meta.GPUClipTimeStepToOutput,
         interaction_threads = meta.GPUInteractionThreads, lanes_per_particle = lanes,
+        short_row_bit_walk = meta.GPUShortRowBitWalk && meta.VariableResolution === nothing &&
+            !(meta.TimeSteppingMode isa DualSPHysicsSymplectic) && lanes <= 32 && 32 % lanes == 0,
         use_graph = meta.GPUUseGraph && !meta.GPUSyncTimers,
         max_steps_per_sync = meta.GPUSyncTimers ? 1 : max(1, meta.GPUMaxStepsPerSync))
     fallbacks = NamedTuple[]

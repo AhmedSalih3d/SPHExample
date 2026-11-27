@@ -1565,6 +1565,13 @@ The geometry tests need no GPU:
 
 ### StillWedge performance
 
+The [candidate-range investigation](benchmark/still_wedge_candidate_ranges.md)
+records paired RTX 5080 timings and the experiments that led to enumerating
+short interaction rows with a lane bit set. The StillWedge example enables
+this traversal and accepts `short_row_bit_walk = false` for comparisons.
+Every lane visits the same indices in increasing order, and each pair still
+uses the live cutoff. Rows longer than 32 candidates use the ordinary stride.
+
 The [occupied-grid reuse proposal](benchmark/still_wedge_grid_reuse.md)
 describes how the output writer could reuse the grid mesh when consecutive
 frames occupy the same cells.
@@ -3533,6 +3540,7 @@ weighting with its own free-surface scaling and accepts the bare
 | `GPUFixedGrid` | `false` | Retain the initial particle-grid bounds. Particles crossing locked sides freeze and are logged at rebuilds; allowed sides grow without shrinking. See "Fixed grid and directional expansion". |
 | `GPUGridExpansion` | `((false, false), ...)` | One `(negative, positive)` Boolean pair per axis, selecting which sides of a fixed grid may expand. Requires `GPUFixedGrid = true`. |
 | `GPUInteractionThreads` | `128` | Threads per block of the interaction and mDBC kernels. |
+| `GPUShortRowBitWalk` | `false` | Enumerate interaction rows with at most 32 candidate indices using a lane bit set when the lane count divides 32. The uniform-grid solver supports this option outside DualSPHysics-style stepping. StillWedge enables it explicitly. |
 | `GPULanesPerParticle` | `0` (auto) | Warp lanes that share one particle's neighbour loop (1, 2, 4, ... 32). The automatic choice targets roughly one resident thread per particle-lane in 3D and one quarter of that in 2D, where neighborhoods generally contain fewer candidates; it caps lanes at 32 and combines them with warp shuffles. Explicit settings are unchanged. Use `1` for large cases and together with `GPUCellSubdivision = 2` (see "Lanes per particle" above). |
 | `GPUInteractionAlwaysInline` | `true` | Force helper-function inlining in the interaction kernel without requesting relaxed floating-point semantics. Independent of fast math; set to `false` to disable. Benchmark the intended model and GPU. |
 | `GPUInteractionFastMath` | `true` | CUDA fast math in the interaction kernel and its callees, including custom models. Allows approximate arithmetic, reassociation, Float32 subnormal flushing and NaN/Inf assumptions. Set to `false` for strict interaction arithmetic. Independent of forced inlining; other kernels retain their existing compilation options. See "Interaction compiler options" below. |
