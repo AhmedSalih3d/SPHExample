@@ -22,6 +22,49 @@ function signal_probe!(signal,values)
     return nothing
 end
 if CUDA.functional()
+    @testset "DBC wall pairs and their consumers" begin
+        T = Float32
+        V = SVector{2,T}
+        geometry = [
+            SPHGeometry{2,T}([V(0,0)]; Density=1000f0, Type=Fixed, GroupMarker=1),
+            SPHGeometry{2,T}([V(0.02,0)]; Density=1100f0, Type=Moving, GroupMarker=2),
+            SPHGeometry{2,T}([V(0,0.02)]; Density=1010f0, Type=Fluid, GroupMarker=3),
+        ]
+        host = AllocateDataStructures(geometry)
+        host.Velocity[2] = V(1,0)
+        gpu = upload_particles(host)
+        constants = SimulationConstants{T}(2; dx=0.02, c₀=20)
+        kernel = SPHKernelInstance{2,T}(WendlandC2(); dx=constants.dx)
+        cells = CellListWorkspace{2,T}(length(gpu))
+        SPHExampleGPU.SPHCellList.rebuild_cell_list!(gpu,cells,kernel.H⁻¹)
+        support = GPUSupportArrays{2,T}(length(gpu); pairwise_timestep=true)
+        function evaluate(diffusion, mode; signal=nothing, sums=Val(false), forces=Val(false), lanes=Val(1))
+            GKPAIR.launch_interactions!(support.dρdtI,gpu.Acceleration,gpu.Kernel,gpu.KernelGradient,
+                support.∇Cᵢ,support.∇◌rᵢ,gpu.Position,gpu.Density,gpu.Velocity,gpu.Type,
+                cells.CellStart,gpu.CellID,cells.grid_dev,HostStep(T(1e-4),0.),
+                diffusion,ZeroViscosity(),kernel,constants,sums,Val(false);
+                boundary_mode=mode,boundary_forces=forces,pair_signal=signal,lanes)
+            return (; density=Array(support.dρdtI), acceleration=Array(gpu.Acceleration),
+                sums=sums isa Val{true} ? Array(gpu.Kernel) : nothing,
+                signal=signal === nothing ? nothing : only(Array(signal)))
+        end
+        fixed = only(findall(==(Fixed), Array(gpu.Type)))
+        for lanes in (Val(1), Val(4))
+            for diffusion in (ZeroDensityDiffusion(), LinearDensityDiffusion())
+                @test evaluate(diffusion, NoMDBC(); lanes) == evaluate(diffusion, nothing; lanes)
+            end
+            diffusion = ZeroDensityDiffusion()
+            for options in ((; signal=support.PairSignal), (; sums=Val(true)), (; forces=Val(true)))
+                @test evaluate(diffusion, NoMDBC(); lanes, options...) ==
+                    evaluate(diffusion, nothing; lanes, options...)
+            end
+            signal = evaluate(diffusion, NoMDBC(); lanes, signal=support.PairSignal).signal
+            @test signal ≈ T(0.02)/(T(0.02)^2 + kernel.η²)
+            wall_diffusion = ZeroGravityLinearDensityDiffusion()
+            @test evaluate(wall_diffusion, NoMDBC(); lanes) == evaluate(wall_diffusion, nothing; lanes)
+            @test !iszero(evaluate(wall_diffusion, NoMDBC(); lanes).density[fixed])
+        end
+    end
     @testset "pair signal block reduction and inactive reset" begin
         for T in (Float32,Float64), threads in (32,128,256,512)
             values = CuArray(T.(1:1003))

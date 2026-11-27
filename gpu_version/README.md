@@ -41,6 +41,12 @@ maximum. Final integration reduces those maxima alongside the other step
 statistics, and the timestep kernel combines the block results using the same
 timestep formula.
 
+Plain DBC gathers can skip fixed and prescribed-moving wall pairs before
+loading pair positions when boundary momentum, pair timestep signals, kernel
+sums, shifting, divergence cleaning, and density-budget diagnostics are
+disabled for that gather. The specialization applies to zero diffusion and
+fluid-only linear diffusion, including their radial forms.
+
 Set `GPULegacyTimestep = true` in `SimulationMetaData` to reproduce the previous
 ordinary criterion. Historical SPHERIC comparison scripts explicitly select it.
 The optional `GPUTimestepDiagnosticsEvery` provenance recorder currently requires

@@ -1165,6 +1165,7 @@ function launch_solver_interactions!(ctx,position,density,velocity,pairs,step;in
         source.Position,source.Density,source.Velocity,source.Type,starts,cells,grid,step,
         SimDensityDiffusion,SimViscosity,SimKernel,SimConstants,FlagKernel,flag_shift;
         threads,lanes,boundary_forces=bforces,pos_cells=pairs,boundary_data=sup.boundary_data,
+        boundary_mode=get(ctx,:boundary_mode,nothing),
         inverse_density,pressure,frozen_particles=get(ctx,:frozen_particles,Val(true)),include_gravity,
         radial=get(ctx,:radial,Val(false)),scalar_sps=get(ctx,:scalar_sps,Val(false)),periodicity,periodic_bounds=bounds,
         preload_types=get(ctx,:preload_types,Val(false)),
