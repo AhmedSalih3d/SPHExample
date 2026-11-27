@@ -87,7 +87,7 @@
 )
 
 #block(fill: pale_teal, inset: 8pt, radius: 4pt)[
-  #text(size: 8pt)[Density describes fluid mass per volume. Pressure is calculated from final fluid density with `EquationOfStateGamma7`; speed is the magnitude of the velocity vector. Boundary particles are excluded from all three summaries.]
+  #text(size: 8pt)[Pressure is calculated from final fluid density with `EquationOfStateGamma7` and includes the configured background pressure offset. Speed is the magnitude of the velocity vector. All three summaries cover fluid particles only.]
 ]
 
 = Component guide

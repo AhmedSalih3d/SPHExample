@@ -1,7 +1,7 @@
 using Test
 using StaticArrays: SVector
 using TimerOutputs: TimerOutput, @timeit
-using SPHExampleGPU: Fixed, Fluid, write_simulation_report
+using SPHExampleGPU: Fixed, Fluid, SimulationConstants, write_simulation_report
 
 function report_fixture(output_dir)
     particles = (
@@ -57,23 +57,7 @@ function report_fixture(output_dir)
             execution = (; path = :direct, graph_batches = 0, direct_batches = 1, graph_capture_failures = 0),
         ),
     )
-    constants = (;
-        ρ₀ = 1000.0,
-        dx = 0.02,
-        m₀ = 0.4,
-        α = 0.01,
-        g = 9.81,
-        c₀ = 20.0,
-        γ = 7.0,
-        γ⁻¹ = 1 / 7,
-        δᵩ = 0.1,
-        CFL = 0.2,
-        Cb = 400000 / 7,
-        Cb⁻¹ = 7 / 400000,
-        ν₀ = 1e-6,
-        BlinConstant = 0.0066,
-        SmagorinskyConstant = 0.12,
-    )
+    constants = SimulationConstants{Float64}(; c₀ = 20.0, BackgroundPressure = 1234.0)
     metadata = (;
         SimulationName = "Wedge test",
         SaveLocation = output_dir,
@@ -187,6 +171,10 @@ end
         @test occursin("Reference fluid density used by the equation of state", source)
         @test occursin("Kinematic viscosity used by the selected viscous model", source)
         @test occursin("Smagorinsky coefficient used by the SPS viscosity model", source)
+        @test occursin("[#text(\"BackgroundPressure\")], [#text(\"1234\")]", source)
+        @test occursin("Constant pressure offset added by the equation of state", source)
+        @test occursin("[#text(\"Pressure (Pa)\")], [#text(\"-2648\")], [#text(\"-706.99\")], [#text(\"1234\")]", source)
+        @test !occursin("Description unavailable", source)
         @test occursin("density", lowercase(source))
         @test occursin("[#text(\"990\")]", source)
         @test occursin("[#text(\"995\")]", source)
