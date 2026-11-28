@@ -44,15 +44,24 @@ function resources_source(source)
         "@cuda always_inline=always_inline fastmath=fastmath threads=threads blocks=cld(n * K, threads) interaction_kernel!(",
         "compiled = @cuda always_inline=always_inline fastmath=fastmath threads=threads blocks=cld(n * K, threads) interaction_kernel!(")
     return replace_once(source,
-        "inv(SimConstants.ρ₀), predictor_output, Val(fuse_reference_forces))\n    return nothing",
-        """inv(SimConstants.ρ₀), predictor_output, Val(fuse_reference_forces))
+        "pair_signal, density_budget, short_row_bit_walk, Val(skip_dbc_wall_pairs))\n    return nothing",
+        """pair_signal, density_budget, short_row_bit_walk, Val(skip_dbc_wall_pairs))
     if !haskey(FUSION_KERNEL_RESOURCES, typeof(compiled))
         memory = CUDA.memory(compiled)
+        compiler_options = (; kernel = true, always_inline, fastmath)
+        ptx = sprint(io -> CUDA.code_ptx(io, compiled.f, typeof(compiled).parameters[2]; compiler_options...))
+        ptx_lines = split(ptx, '\\n')
+        sass = sprint(io -> CUDA.code_sass(io, compiled.f, typeof(compiled).parameters[2]; compiler_options...))
+        sass_lines = split(sass, '\\n')
         FUSION_KERNEL_RESOURCES[typeof(compiled)] = (;
             pass = predictor_output === nothing ? "corrector" : "predictor",
             step = step isa HostStep ? "host" : "device", threads, lanes = K,
             registers_per_thread = CUDA.registers(compiled),
-            local_bytes_per_thread = memory.local, shared_bytes_per_block = memory.shared)
+            local_bytes_per_thread = memory.local, shared_bytes_per_block = memory.shared,
+            ptx_local_loads = count(line -> occursin(r"^\\s*ld\\.local(?:\\.|\\s)", line), ptx_lines),
+            ptx_local_stores = count(line -> occursin(r"^\\s*st\\.local(?:\\.|\\s)", line), ptx_lines),
+            sass_local_loads = count(line -> occursin(r"\\bLDL(?:\\.|\\s)", line), sass_lines),
+            sass_local_stores = count(line -> occursin(r"\\bSTL(?:\\.|\\s)", line), sass_lines))
     end
     return nothing""")
 end

@@ -1764,6 +1764,20 @@ These are CUDA function attributes, not PTX virtual-register counts or measured
 occupancy. Local memory size alone does not establish spill traffic.
 The timing benefit is not evidence of reduced registers or memory use.
 
+The `--registers` report also counts `ld.local`/`st.local` in generated PTX and
+`LDL`/`STL` in compiled SASS, using the same inlining and fast-math options as
+the launched kernel. These are static instruction counts, not dynamic traffic
+counters. On an RTX 5080, 128-thread runs of the 171,496-particle 3D dam break
+used 56–64 registers/thread and had no local loads in the pair kernels. The
+correctors had no local-memory frame or SASS local operations. The fused
+predictor had a 32-byte frame and nine SASS local stores, but no local loads;
+the stores were in CUDA's cold exception-reporting path (`@cuprintf`), not
+register spill/reload traffic. The 365,656-particle 3D duckling likewise had
+no pair-kernel local operations in either radial/cached or reference/uncached
+resource runs. Do not remove bounds/error reporting or impose a register cap
+based on the predictor's frame size; neither would address spills in these
+measured variants.
+
 The historical unit-wall alternative (skipping multiplication by a wall factor
 of one) matched state and output exactly but did not establish a reliable
 large-case speedup. It remains benchmark-only. `--candidate=unit-wall` now tests
