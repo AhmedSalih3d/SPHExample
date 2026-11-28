@@ -4690,6 +4690,10 @@ julia --project=gpu_version -L gpu_version/test/cell_subdivision_benchmark.jl gp
 
 ## Benchmarks
 
+The [persistent step loop experiment](benchmark/persistent_step_loop.md) compares
+bounded, single-block SPH batches with direct launches and CUDA graph replay on
+32- and 64-particle cases.
+
 The [GPU performance roadmap](docs/gpu_performance_roadmap.md) lists 100
 experiments, with starting points for Duckling, DamBreak, StillWedge, and
 MovingSquare.
